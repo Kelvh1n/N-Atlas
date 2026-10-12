@@ -33,6 +33,7 @@ class GestureRecognizer:
         self.last_confirmed_gesture: Optional[str] = None
         self.last_trigger_time: float = 0.0
         self.idle_frames: int = 0
+        self.cluster_stats: Dict[str, Any] = {}
 
         self.load_model()
 
@@ -55,6 +56,7 @@ class GestureRecognizer:
                     self.hand_mode = meta.get("hand_mode", "dual")
                     self.expected_features = meta.get("num_features", 28)
                     self.feature_columns = meta.get("feature_columns", config.DUAL_FEATURE_COLUMNS)
+                    self.cluster_stats = meta.get("cluster_stats", {})
                 except Exception as me:
                     logger.warning(f"Could not read metadata JSON: {me}")
             else:
@@ -71,7 +73,8 @@ class GestureRecognizer:
             self.is_loaded = True
             logger.info(
                 f"GestureRecognizer model loaded. Hand Mode: '{self.hand_mode}' ({self.expected_features} features). "
-                f"Classes ({len(self.label_encoder.classes_)}): {list(self.label_encoder.classes_)}"
+                f"Classes ({len(self.label_encoder.classes_)}): {list(self.label_encoder.classes_)} | "
+                f"OOD Clusters: {len(self.cluster_stats)}"
             )
             return True
         except Exception as e:
@@ -92,7 +95,8 @@ class GestureRecognizer:
 
     def predict_frame(self, feature_vector: np.ndarray) -> Tuple[Optional[str], float, Dict[str, float]]:
         """
-        Predict single frame, automatically adapting to 1-hand (14 feat) or 2-hands (28 feat).
+        Predict single frame, automatically adapting to 1-hand (14 feat) or 2-hands (28 feat),
+        with Out-of-Distribution (OOD) distance gating to prevent random classifier hallucinations.
         Returns:
             (best_label, confidence, top_probabilities_dict)
         """
@@ -127,6 +131,17 @@ class GestureRecognizer:
                 best_idx = int(np.argmax(probs))
                 confidence = float(probs[best_idx])
                 best_label = self.label_encoder.inverse_transform([best_idx])[0]
+
+                # Out-of-Distribution (OOD) Distance Gating:
+                # If feature vector is far from the trained cluster envelope, reject as UNKNOWN
+                if self.cluster_stats and best_label in self.cluster_stats:
+                    c_info = self.cluster_stats[best_label]
+                    centroid = np.array(c_info["centroid"], dtype=float)
+                    max_r = float(c_info.get("max_radius", c_info.get("radius_95", 3.0) * 1.3))
+                    dist = float(np.linalg.norm(vec_scaled[0] - centroid))
+                    # Allow 1.6x training envelope for natural human variability
+                    if dist > max_r * 1.6:
+                        return None, 0.0, {}
 
                 # Extract top 3 candidates for diagnostics
                 top_indices = np.argsort(probs)[::-1][:3]
@@ -170,8 +185,8 @@ class GestureRecognizer:
         # 1. Below Confidence Threshold: Hand is transitioning or relaxed
         if label is None or conf < config.CONFIDENCE_THRESHOLD:
             self.idle_frames += 1
-            if self.idle_frames >= 3:
-                # Release latch after 3 consecutive neutral/uncertain frames (~60ms)
+            if self.idle_frames >= 4:
+                # Release latch after 4 consecutive neutral/uncertain frames (~80ms)
                 self.latched_gesture = None
                 self.candidate_label = None
                 self.candidate_count = 0
@@ -188,7 +203,7 @@ class GestureRecognizer:
         # 2. Neutral Rest / Idle States
         if label in ["IDLE", "REST"]:
             self.idle_frames += 1
-            if self.idle_frames >= 2:
+            if self.idle_frames >= 3:
                 self.latched_gesture = None
                 self.candidate_label = None
                 self.candidate_count = 0
@@ -206,6 +221,22 @@ class GestureRecognizer:
         self.idle_frames = 0
         is_dynamic_sign = label in config.DYNAMIC_GESTURES
         gesture_type_desc = "DYNAMIC GESTURE 🔄" if is_dynamic_sign else "STATIC POSE ✋"
+
+        # KINEMATIC MOTION GATING:
+        # A Static Pose (e.g. A-Z, PEACE, etc.) requires a steady hand in signing space.
+        # If the hand is actively in motion (omega > 28 deg/s or lin_accel_g > 0.22),
+        # suppress static pose candidate accumulation to eliminate erratic triggers during transitions!
+        if not is_dynamic_sign and is_moving:
+            self.candidate_count = 0
+            meta = {
+                "gesture_type": gesture_type_desc,
+                "is_dynamic": False,
+                "motion_state": f"MOVING ({omega:.1f}°/s) - STATIC PAUSED",
+                "is_latched": (label == self.latched_gesture),
+                "velocity_dps": omega,
+                "top_candidates": top_dict
+            }
+            return None, conf, False, meta
 
         # Stability counter
         if label == self.candidate_label:

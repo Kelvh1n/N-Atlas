@@ -56,6 +56,9 @@ class ASLTranslatorApp(tk.Tk):
         self.live_recognition_active = tk.BooleanVar(value=True)
         self.dataset_hand_mode_var = tk.StringVar(value="right")  # "right", "left", "both"
         self.train_hand_mode_var = tk.StringVar(value="auto")    # "auto", "right", "left", "dual"
+        self.auto_clear_enabled_var = tk.BooleanVar(value=True)
+        self.auto_clear_delay_var = tk.StringVar(value="6s")
+        self.last_sentence_activity_time = time.time()
 
         # Build UI Layout
         self._build_header()
@@ -767,6 +770,29 @@ class ASLTranslatorApp(tk.Tk):
         )
         self.lbl_latch_status.pack(side=tk.LEFT, padx=6)
 
+        # Quick Calibration Tare buttons right on Tab 1
+        tk.Button(
+            kinematics_row,
+            text="🎯 Tare Flat (0°)",
+            bg="#0284c7",
+            fg="white",
+            font=("Segoe UI", 8, "bold"),
+            padx=6,
+            pady=1,
+            command=lambda: self._cal_set_flat(None)
+        ).pack(side=tk.RIGHT, padx=3)
+
+        tk.Button(
+            kinematics_row,
+            text="✊ Tare Fist (90°)",
+            bg="#e11d48",
+            fg="white",
+            font=("Segoe UI", 8, "bold"),
+            padx=6,
+            pady=1,
+            command=lambda: self._cal_set_bent(None)
+        ).pack(side=tk.RIGHT, padx=3)
+
         # Active Model Info Badge
         self.lbl_model_status_badge = tk.Label(
             top_card,
@@ -781,10 +807,53 @@ class ASLTranslatorApp(tk.Tk):
         mid_card = tk.Frame(grid, bg="#1a2332", bd=1, relief="ridge", padx=15, pady=12)
         mid_card.pack(fill=tk.X, pady=5)
 
-        tk.Label(mid_card, text="CONSTRUCTED ENGLISH SENTENCE", font=("Segoe UI", 9, "bold"), fg="#94a3b8", bg="#1a2332").pack(anchor=tk.W)
+        # Header with Auto-Clear Controls
+        mid_hdr = tk.Frame(mid_card, bg="#1a2332")
+        mid_hdr.pack(fill=tk.X, pady=(0, 4))
+
+        tk.Label(mid_hdr, text="CONSTRUCTED ENGLISH SENTENCE", font=("Segoe UI", 9, "bold"), fg="#94a3b8", bg="#1a2332").pack(side=tk.LEFT)
+
+        # Auto-Clear Controls on the right side of header
+        auto_clear_frame = tk.Frame(mid_hdr, bg="#1a2332")
+        auto_clear_frame.pack(side=tk.RIGHT)
+
+        self.lbl_auto_clear_timer = tk.Label(
+            auto_clear_frame,
+            text="",
+            font=("Segoe UI", 8, "bold"),
+            fg="#fbbf24",
+            bg="#1a2332"
+        )
+        self.lbl_auto_clear_timer.pack(side=tk.RIGHT, padx=(6, 0))
+
+        # Auto-Clear delay selector dropdown
+        self.cmb_auto_clear_delay = ttk.Combobox(
+            auto_clear_frame,
+            textvariable=self.auto_clear_delay_var,
+            values=["3s", "5s", "6s", "8s", "10s", "15s", "30s"],
+            width=5,
+            state="readonly",
+            font=("Segoe UI", 8)
+        )
+        self.cmb_auto_clear_delay.pack(side=tk.RIGHT, padx=(4, 6))
+
+        # Auto-Clear checkbox toggle
+        self.chk_auto_clear = tk.Checkbutton(
+            auto_clear_frame,
+            text="Auto-Clear when idle:",
+            variable=self.auto_clear_enabled_var,
+            bg="#1a2332",
+            fg="#cbd5e1",
+            selectcolor="#0f172a",
+            activebackground="#1a2332",
+            activeforeground="#38bdf8",
+            font=("Segoe UI", 9)
+        )
+        self.chk_auto_clear.pack(side=tk.RIGHT)
 
         self.txt_english_sentence = tk.Text(mid_card, height=3, bg="#0f172a", fg="#f8fafc", font=("Segoe UI", 13), relief="flat", wrap=tk.WORD, padx=8, pady=8)
         self.txt_english_sentence.pack(fill=tk.X, pady=8)
+        self.txt_english_sentence.bind("<Key>", lambda e: self._on_user_typing_event())
 
         btn_row = tk.Frame(mid_card, bg="#1a2332")
         btn_row.pack(fill=tk.X)
@@ -818,7 +887,18 @@ class ASLTranslatorApp(tk.Tk):
             padx=6,
             pady=1,
             command=self._show_natlas_model_info
-        ).pack(side=tk.LEFT, padx=10)
+        ).pack(side=tk.LEFT, padx=(10, 4))
+
+        tk.Button(
+            lang_control_row,
+            text="☁️ Online API Token",
+            font=("Segoe UI", 8, "bold"),
+            bg="#0369a1",
+            fg="white",
+            padx=6,
+            pady=1,
+            command=self._prompt_set_hf_token
+        ).pack(side=tk.LEFT, padx=4)
 
         # Neural Engine Toggle Checkbox
         chk_neural = tk.Checkbutton(
@@ -1002,11 +1082,11 @@ class ASLTranslatorApp(tk.Tk):
         cal_panel.pack(fill=tk.X, pady=(6, 0))
 
         cal_btns = tk.Frame(cal_panel, bg="#1e293b")
-        cal_btns.pack(fill=tk.X)
-
-        tk.Button(cal_btns, text="Both Flat (0°)", bg="#0284c7", fg="white", font=("Segoe UI", 8, "bold"), command=lambda: self._cal_set_flat(None)).pack(side=tk.LEFT, padx=3)
-        tk.Button(cal_btns, text="Both Fist (90°)", bg="#e11d48", fg="white", font=("Segoe UI", 8, "bold"), command=lambda: self._cal_set_bent(None)).pack(side=tk.LEFT, padx=3)
-        tk.Button(cal_btns, text="Reset", bg="#475569", fg="white", font=("Segoe UI", 8), command=lambda: self._cal_reset(None)).pack(side=tk.LEFT, padx=3)
+        tk.Button(cal_btns, text="Right Flat", bg="#0284c7", fg="white", font=("Segoe UI", 8, "bold"), command=lambda: self._cal_set_flat("RIGHT")).pack(side=tk.LEFT, padx=2)
+        tk.Button(cal_btns, text="Right Fist", bg="#e11d48", fg="white", font=("Segoe UI", 8, "bold"), command=lambda: self._cal_set_bent("RIGHT")).pack(side=tk.LEFT, padx=2)
+        tk.Button(cal_btns, text="Both Flat", bg="#0369a1", fg="white", font=("Segoe UI", 8), command=lambda: self._cal_set_flat(None)).pack(side=tk.LEFT, padx=2)
+        tk.Button(cal_btns, text="Both Fist", bg="#be123c", fg="white", font=("Segoe UI", 8), command=lambda: self._cal_set_bent(None)).pack(side=tk.LEFT, padx=2)
+        tk.Button(cal_btns, text="Reset", bg="#475569", fg="white", font=("Segoe UI", 8), command=lambda: self._cal_reset(None)).pack(side=tk.LEFT, padx=2)
 
         self.lbl_cal_status = tk.Label(cal_panel, text="Status: Ready", fg="#94a3b8", bg="#1e293b", font=("Segoe UI", 8))
         self.lbl_cal_status.pack(fill=tk.X, pady=(4, 0))
@@ -1387,6 +1467,9 @@ class ASLTranslatorApp(tk.Tk):
 
                 if is_new_event and label and label not in ["IDLE", "REST"]:
                     self._on_gesture_event(label)
+
+                is_user_actively_signing = bool((label and label not in ["IDLE", "REST"]) or is_mov)
+                self._check_auto_clear_timer(is_user_actively_signing)
             else:
                 # Gloves are not streaming or recognition paused
                 if not is_glove_active:
@@ -1402,6 +1485,7 @@ class ASLTranslatorApp(tk.Tk):
                 if hasattr(self, "lbl_gesture_type"):
                     self.lbl_gesture_type.config(text="TYPE: IDLE", fg="#64748b")
                 self.recognizer.reset_state()
+                self._check_auto_clear_timer(is_user_actively_signing=False)
 
 
         except Exception as e:
@@ -1414,12 +1498,14 @@ class ASLTranslatorApp(tk.Tk):
         sentence = self.builder.add_token(sign)
         self.txt_english_sentence.delete("1.0", tk.END)
         self.txt_english_sentence.insert("1.0", sentence)
+        self.last_sentence_activity_time = time.time()
         self._trigger_translation()
 
     # =========================================================================
     # Translation & TTS Handlers
     # =========================================================================
     def _trigger_translation(self):
+        self.last_sentence_activity_time = time.time()
         eng_text = self.txt_english_sentence.get("1.0", tk.END).strip()
         if not eng_text:
             return
@@ -1486,27 +1572,30 @@ class ASLTranslatorApp(tk.Tk):
         tk.Label(card, text=status_line, font=("Segoe UI", 9, "bold"), fg="#10b981", bg="#1a2332").pack(pady=(0, 8))
 
         doc_text = (
-            "1. WHAT IS N-ATLAS?\n"
-            "   N-Atlas is an Afro-centric Multilingual NLP initiative developed to solve the\n"
-            "   low-resource language gap for major African languages:\n"
-            "   • Yorùbá (yor_Latn / yo) — 45+ Million speakers (Niger-Congo)\n"
-            "   • Igbo (ibo_Latn / ig)   — 30+ Million speakers (Niger-Congo)\n"
-            "   • Hausa (hau_Latn / ha)  — 70+ Million speakers (Afroasiatic)\n\n"
-            "2. HOW IT IS INCLUDED IN THIS PROJECT (software/translator.py):\n"
-            "   The project uses a resilient Dual-Tier translation architecture:\n"
-            "   • TIER 1 - Fast Offline Tonal Lexicon:\n"
+            "1. WHAT IS NCAIR1/N-ATLaS?\n"
+            "   N-ATLaS is Nigeria's flagship Sovereign Multilingual AI Model released by the\n"
+            "   National Centre for AI and Robotics (NCAIR) in collaboration with Awarri AI.\n"
+            "   • Hugging Face Repository: https://huggingface.co/NCAIR1/N-ATLaS\n"
+            "   • Base Architecture: Meta Llama-3-8B Causal LM (8 Billion Parameters)\n"
+            "   • Pre-training & SFT: 392M+ tokens across English, Hausa, Igbo, and Yoruba\n"
+            "   • Context Length: 8,092 tokens | Vocabulary Size: 128,256 tokens\n\n"
+            "2. HOW IT IS INTEGRATED IN THIS CODEBASE (software/translator.py):\n"
+            "   The project provides a resilient Multi-Tier Nigerian translation pipeline:\n"
+            "   • TIER 1 - Ultra-Fast Offline Tonal Lexicon:\n"
             "     Curated high-accuracy bilingual repository with authentic tonal diacritics.\n"
-            "     Runs with 0ms network latency — perfect for offline edge deployment.\n"
-            "   • TIER 2 - Deep Neural Transformer (Hugging Face Transformers):\n"
-            "     Integrates Seq2Seq transformer models (facebook/nllb-200-distilled-600M\n"
-            "     and castorini/afri-n-atlas) for open-vocabulary generation via beam search.\n\n"
+            "     Runs instantly at 0ms latency with zero GPU or network requirements.\n"
+            "   • TIER 2 - N-ATLaS 8B Hugging Face Cloud Inference API:\n"
+            "     Instant serverless GPU inference via huggingface_hub using your free HF token.\n"
+            "     Allows full 8B LLM translation without downloading 16 GB of weights locally!\n"
+            "   • TIER 3 - Local Offline Model Weights (data/models/natlas/):\n"
+            "     Can be downloaded using 'python software/download_natlas_model.py'.\n\n"
             "3. TONAL DIACRITIC PRESERVATION:\n"
-            "   Yorùbá and Igbo are tonal languages where accents change word meaning:\n"
-            "   (e.g., in Yorùbá: 'ọwọ́' = hand, 'owó' = money, 'ọ̀wọ̀' = respect).\n"
-            "   N-Atlas preserves authentic high (´), low (`), and subdots (ẹ, ọ, ṣ, ụ, ị)!\n\n"
+            "   Yoruba and Igbo are tonal languages where accents fundamentally alter meaning:\n"
+            "   (e.g., in Yoruba: 'ọwọ́' = hand, 'owó' = money, 'ọ̀wọ̀' = respect).\n"
+            "   N-ATLaS preserves authentic high (´), low (`), and subdots (ẹ, ọ, ṣ, ụ, ị, ṅ)!\n\n"
             "4. SPEECH SYNTHESIS (TTS):\n"
-            "   The phonetic pronunciation guide passes these diacritics to the multilingual\n"
-            "   TTS engine to pronounce authentic indigenous audio for the listener."
+            "   The translation output feeds directly into the Indigenous TTS engine\n"
+            "   to speak authentic audio for Yoruba, Igbo, and Hausa listeners."
         )
 
         txt_box = tk.Text(card, bg="#0f172a", fg="#f8fafc", font=("Consolas", 9), relief="sunken", padx=10, pady=10, wrap=tk.WORD)
@@ -1525,17 +1614,148 @@ class ASLTranslatorApp(tk.Tk):
             command=info_win.destroy
         ).pack(pady=(8, 0))
 
+    def _prompt_set_hf_token(self):
+        """Displays dialog allowing user to configure their Hugging Face API token for online N-ATLaS inference."""
+        token_win = tk.Toplevel(self)
+        token_win.title("Hugging Face Online API Token Setup")
+        token_win.geometry("580x440")
+        token_win.configure(bg="#0f172a")
+        token_win.resizable(False, False)
+        token_win.transient(self)
+        token_win.grab_set()
+
+        card = tk.Frame(token_win, bg="#1a2332", padx=20, pady=16, bd=2, relief="groove")
+        card.pack(fill=tk.BOTH, expand=True, padx=14, pady=14)
+
+        tk.Label(
+            card,
+            text="☁️ N-ATLaS ONLINE CLOUD INFERENCE SETUP",
+            font=("Segoe UI", 12, "bold"),
+            fg="#38bdf8",
+            bg="#1a2332"
+        ).pack(pady=(0, 6))
+
+        tk.Label(
+            card,
+            text="Run N-ATLaS 8B on cloud GPUs without downloading 16 GB of weights!",
+            font=("Segoe UI", 9),
+            fg="#94a3b8",
+            bg="#1a2332"
+        ).pack(pady=(0, 10))
+
+        # Guidance Box
+        guide_box = tk.Frame(card, bg="#0f172a", padx=12, pady=10, bd=1, relief="ridge")
+        guide_box.pack(fill=tk.X, pady=(0, 10))
+
+        steps = (
+            "1. Visit https://huggingface.co/NCAIR1/N-ATLaS while logged in.\n"
+            "   Click 'Acknowledge' to accept the model license (required once).\n\n"
+            "2. Generate a FREE user access token at:\n"
+            "   https://huggingface.co/settings/tokens (Role: 'Read').\n\n"
+            "3. Paste your token (starts with 'hf_...') into the box below:"
+        )
+        tk.Label(guide_box, text=steps, font=("Segoe UI", 8, "bold"), fg="#f8fafc", bg="#0f172a", justify=tk.LEFT).pack(anchor=tk.W)
+
+        # Existing Token Check
+        token_file = config.DATA_DIR / "hf_token.txt"
+        existing_token = ""
+        if token_file.exists():
+            try:
+                existing_token = token_file.read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
+
+        lbl_status = tk.Label(
+            card,
+            text=f"Current Status: {'✓ Active (' + existing_token[:6] + '...)' if existing_token else '✕ No Token Configured'}",
+            font=("Segoe UI", 9, "bold"),
+            fg="#10b981" if existing_token else "#f59e0b",
+            bg="#1a2332"
+        )
+        lbl_status.pack(anchor=tk.W, pady=(0, 6))
+
+        entry_frame = tk.Frame(card, bg="#1a2332")
+        entry_frame.pack(fill=tk.X, pady=(0, 12))
+
+        tk.Label(entry_frame, text="HF Token:", font=("Segoe UI", 9, "bold"), fg="#cbd5e1", bg="#1a2332").pack(side=tk.LEFT, padx=(0, 6))
+        txt_token = tk.Entry(entry_frame, font=("Segoe UI", 10), bg="#0f172a", fg="#f8fafc", insertbackground="white", width=36)
+        if existing_token:
+            txt_token.insert(0, existing_token)
+        txt_token.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        def _save_and_test():
+            tok = txt_token.get().strip()
+            if not tok:
+                messagebox.showwarning("Empty Token", "Please paste your Hugging Face token first.", parent=token_win)
+                return
+
+            lbl_status.config(text="Connecting to Hugging Face Cloud...", fg="#38bdf8")
+            token_win.update_idletasks()
+
+            success = self.translator.set_hf_token(tok)
+            if success:
+                lbl_status.config(text=f"✓ Token Activated ({tok[:6]}...)", fg="#10b981")
+                self.neural_mode_var.set(True)
+                self.lbl_engine_info.config(text="Engine: N-ATLaS Cloud API (Active ☁️)", fg="#10b981")
+                messagebox.showinfo(
+                    "Token Saved & Cloud API Ready",
+                    f"Successfully connected to {config.NATLAS_MODEL_NAME}!\n\n"
+                    "Online cloud translation is now active. When you construct sentences, "
+                    "N-ATLaS will generate authentic translations on cloud GPUs without local downloads.",
+                    parent=token_win
+                )
+                self._trigger_translation()
+                token_win.destroy()
+            else:
+                lbl_status.config(text="✕ Connection Failed", fg="#ef4444")
+                messagebox.showerror(
+                    "Connection Failed",
+                    "Could not initialize Hugging Face InferenceClient with that token.\n\n"
+                    "Please verify:\n"
+                    "1. You accepted the license on https://huggingface.co/NCAIR1/N-ATLaS\n"
+                    "2. The token has 'Read' permission on Hugging Face.",
+                    parent=token_win
+                )
+
+        btn_row = tk.Frame(card, bg="#1a2332")
+        btn_row.pack(fill=tk.X, pady=(6, 0))
+
+        tk.Button(
+            btn_row,
+            text="💾 Save & Activate Online Engine",
+            font=("Segoe UI", 9, "bold"),
+            bg="#0284c7",
+            fg="white",
+            padx=12,
+            pady=4,
+            command=_save_and_test
+        ).pack(side=tk.LEFT)
+
+        tk.Button(
+            btn_row,
+            text="Cancel",
+            font=("Segoe UI", 9),
+            bg="#334155",
+            fg="white",
+            padx=12,
+            pady=4,
+            command=token_win.destroy
+        ).pack(side=tk.RIGHT)
+
     def _speak_english(self):
         text = self.txt_english_sentence.get("1.0", tk.END).strip()
         if text:
+            self.last_sentence_activity_time = time.time()
             self.tts.speak(text, "English")
 
     def _speak_nigerian(self):
         text = self.lbl_translation_output.cget("text")
         if text and text != "[Translation will appear here]":
+            self.last_sentence_activity_time = time.time()
             self.tts.speak(text, self.target_lang_var.get())
 
     def _action_backspace(self):
+        self.last_sentence_activity_time = time.time()
         new_text = self.builder.backspace()
         self.txt_english_sentence.delete("1.0", tk.END)
         self.txt_english_sentence.insert("1.0", new_text)
@@ -1547,8 +1767,82 @@ class ASLTranslatorApp(tk.Tk):
         self.lbl_translation_output.config(text="[Translation will appear here]")
         self.lbl_phonetics.config(text="Pronunciation: -")
         self.recognizer.reset_state()
+        self.last_sentence_activity_time = time.time()
+        if hasattr(self, "lbl_auto_clear_timer"):
+            self.lbl_auto_clear_timer.config(text="")
+
+    def _on_user_typing_event(self):
+        """Called when user types directly into the English sentence box."""
+        self.last_sentence_activity_time = time.time()
+        if hasattr(self, "lbl_auto_clear_timer"):
+            curr = self.lbl_auto_clear_timer.cget("text")
+            if "Auto-cleared" in curr:
+                self.lbl_auto_clear_timer.config(text="")
+
+    def _auto_clear_sentence(self):
+        """Automatically clears sentence and translations after idle timeout."""
+        sentence_text = self.txt_english_sentence.get("1.0", tk.END).strip()
+        if not sentence_text:
+            return
+        self.builder.clear()
+        self.txt_english_sentence.delete("1.0", tk.END)
         self.lbl_translation_output.config(text="[Translation will appear here]")
         self.lbl_phonetics.config(text="Pronunciation: -")
+        self.recognizer.reset_state()
+        self.last_sentence_activity_time = time.time()
+        if hasattr(self, "lbl_auto_clear_timer"):
+            self.lbl_auto_clear_timer.config(text="✓ Auto-cleared (Ready for new sign)", fg="#10b981")
+            self.after(2500, self._clear_auto_clear_badge)
+
+    def _clear_auto_clear_badge(self):
+        if hasattr(self, "lbl_auto_clear_timer"):
+            curr = self.lbl_auto_clear_timer.cget("text")
+            if "Auto-cleared" in curr:
+                self.lbl_auto_clear_timer.config(text="")
+
+    def _check_auto_clear_timer(self, is_user_actively_signing: bool):
+        """Evaluates auto-clear timeout condition and updates UI countdown badge."""
+        if not hasattr(self, "txt_english_sentence"):
+            return
+        sentence_text = self.txt_english_sentence.get("1.0", tk.END).strip()
+        if not sentence_text:
+            if hasattr(self, "lbl_auto_clear_timer"):
+                curr = self.lbl_auto_clear_timer.cget("text")
+                if "Auto-clear in" in curr or "Signing" in curr:
+                    self.lbl_auto_clear_timer.config(text="")
+            return
+
+        if not self.auto_clear_enabled_var.get():
+            if hasattr(self, "lbl_auto_clear_timer"):
+                curr = self.lbl_auto_clear_timer.cget("text")
+                if "Auto-clear in" in curr or "Signing" in curr:
+                    self.lbl_auto_clear_timer.config(text="")
+            return
+
+        # If user is actively moving hands or holding a sign, reset idle clock
+        if is_user_actively_signing:
+            self.last_sentence_activity_time = time.time()
+            if hasattr(self, "lbl_auto_clear_timer"):
+                self.lbl_auto_clear_timer.config(text="● Signing...", fg="#38bdf8")
+            return
+
+        delay_str = self.auto_clear_delay_var.get().replace("s", "").strip()
+        try:
+            delay_sec = float(delay_str)
+        except ValueError:
+            delay_sec = 6.0
+
+        idle_time = time.time() - self.last_sentence_activity_time
+        remaining = delay_sec - idle_time
+
+        if remaining <= 0:
+            self._auto_clear_sentence()
+        elif remaining <= 3.0:
+            if hasattr(self, "lbl_auto_clear_timer"):
+                self.lbl_auto_clear_timer.config(text=f"⏳ Auto-clear in {remaining:.1f}s", fg="#fbbf24")
+        else:
+            if hasattr(self, "lbl_auto_clear_timer"):
+                self.lbl_auto_clear_timer.config(text=f"⏳ Auto-clear in {int(remaining)}s", fg="#94a3b8")
 
     # =========================================================================
     # Calibration Handlers

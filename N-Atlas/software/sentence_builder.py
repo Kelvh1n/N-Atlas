@@ -34,10 +34,63 @@ class SentenceBuilder:
         ("GOODBYE",): "Goodbye, see you later."
     }
 
+    # Order-independent multi-sign patterns (frozenset matching)
+    GLOSS_SET_PATTERNS = {
+        # 3-sign combinations
+        frozenset(["HELLO", "HOW_ARE_YOU", "THANK_YOU"]): "Hello, how are you? Thank you very much.",
+        frozenset(["PLEASE", "WATER", "FOOD"]): "Please give me some water and food.",
+        frozenset(["PLEASE", "HELP", "DOCTOR"]): "Emergency, please help and call a doctor!",
+        frozenset(["PLEASE", "HELP", "WATER"]): "Please help me, I need water.",
+        frozenset(["PLEASE", "HELP", "FOOD"]): "Please help me, I need food.",
+        frozenset(["HELP", "DOCTOR", "PLEASE"]): "Emergency, please call a doctor immediately!",
+        
+        # 2-sign combinations (order-independent)
+        frozenset(["WATER", "PLEASE"]): "Please give me some water.",
+        frozenset(["FOOD", "PLEASE"]): "Please give me some food.",
+        frozenset(["HELP", "PLEASE"]): "Please, help me immediately.",
+        frozenset(["DOCTOR", "HELP"]): "Medical emergency, please call a doctor!",
+        frozenset(["DOCTOR", "PLEASE"]): "Please, I need to see a doctor.",
+        frozenset(["HELLO", "HOW_ARE_YOU"]): "Hello, how are you doing?",
+        frozenset(["HELLO", "THANK_YOU"]): "Hello, thank you very much.",
+        frozenset(["HELLO", "PLEASE"]): "Hello, please.",
+        frozenset(["YES", "PLEASE"]): "Yes, please.",
+        frozenset(["NO", "THANK_YOU"]): "No, thank you.",
+        frozenset(["YES", "THANK_YOU"]): "Yes, thank you.",
+        frozenset(["NO", "PLEASE"]): "No, please.",
+        frozenset(["THANK_YOU", "PLEASE"]): "Thank you, please.",
+        frozenset(["WATER", "FOOD"]): "I need water and food.",
+        frozenset(["HELP", "WATER"]): "Help, please give me some water.",
+        frozenset(["HELP", "FOOD"]): "Help, please give me some food.",
+        frozenset(["FAMILY", "I_LOVE_YOU"]): "I love my family.",
+        frozenset(["PEACE", "FAMILY"]): "Peace to my family.",
+        frozenset(["PEACE", "HELLO"]): "Peace and greetings.",
+        frozenset(["GOOD_MORNING", "HOW_ARE_YOU"]): "Good morning, how are you doing?",
+        frozenset(["GOODBYE", "THANK_YOU"]): "Goodbye, thank you very much.",
+        frozenset(["GOOD_MORNING", "HELLO"]): "Good morning, hello!",
+
+        # 1-sign standalone meanings
+        frozenset(["HELLO"]): "Hello, greetings!",
+        frozenset(["HOW_ARE_YOU"]): "How are you doing?",
+        frozenset(["THANK_YOU"]): "Thank you very much.",
+        frozenset(["PLEASE"]): "Please.",
+        frozenset(["YES"]): "Yes, that is correct.",
+        frozenset(["NO"]): "No, thank you.",
+        frozenset(["HELP"]): "Please, I need help.",
+        frozenset(["WATER"]): "I would like some water.",
+        frozenset(["FOOD"]): "I need food.",
+        frozenset(["DOCTOR"]): "I need to see a doctor.",
+        frozenset(["FAMILY"]): "This is my family.",
+        frozenset(["I_LOVE_YOU"]): "I love you.",
+        frozenset(["GOOD_MORNING"]): "Good morning to you.",
+        frozenset(["PEACE"]): "Peace and harmony.",
+        frozenset(["GOODBYE"]): "Goodbye, see you later."
+    }
+
     def __init__(self, fingerspell_timeout_sec: float = 2.5):
         self.tokens: List[str] = []
         self.spelling_buffer: List[str] = []
         self.last_letter_time: float = 0.0
+        self.last_activity_time: float = time.time()
         self.fingerspell_timeout = fingerspell_timeout_sec
 
     def add_token(self, token: str) -> str:
@@ -52,6 +105,7 @@ class SentenceBuilder:
             return self.get_draft_sentence()
 
         now = time.time()
+        self.last_activity_time = now
 
         # If token is a single letter (A-Z)
         if len(token) == 1 and token.isalpha():
@@ -97,22 +151,49 @@ class SentenceBuilder:
         if not tokens:
             return ""
 
-        # Check for matching idiomatic multi-sign phrase
+        # 1. Exact tuple match (preserves explicit sequence)
         tuple_tokens = tuple(tokens)
         if tuple_tokens in self.GLOSS_PHRASE_PATTERNS:
             return self.GLOSS_PHRASE_PATTERNS[tuple_tokens]
 
-        # Check sub-patterns or format into smooth sentence
-        formatted_words = []
-        for t in tokens:
-            # If word is like "HOW_ARE_YOU", convert to "how are you"
-            cleaned = t.replace("_", " ").capitalize()
-            formatted_words.append(cleaned)
+        # 2. Exact set match (order-independent multi-sign phrases)
+        set_tokens = frozenset(tokens)
+        if set_tokens in self.GLOSS_SET_PATTERNS:
+            return self.GLOSS_SET_PATTERNS[set_tokens]
 
-        sentence = " ".join(formatted_words)
-        # Ensure proper capitalization and ending punctuation
-        if sentence and sentence[-1] not in [".", "?", "!"]:
-            sentence += "."
+        # 3. Sub-phrase decomposition (e.g. ["HELLO", "WATER", "PLEASE"])
+        if len(tokens) >= 2:
+            last_pair = frozenset(tokens[-2:])
+            if last_pair in self.GLOSS_SET_PATTERNS:
+                lead_words = [t.replace("_", " ").capitalize() for t in tokens[:-2]]
+                lead_str = ", ".join(lead_words)
+                pair_str = self.GLOSS_SET_PATTERNS[last_pair]
+                return f"{lead_str}, {pair_str}" if lead_str else pair_str
+
+            first_pair = frozenset(tokens[:2])
+            if first_pair in self.GLOSS_SET_PATTERNS:
+                pair_str = self.GLOSS_SET_PATTERNS[first_pair].rstrip(".!?:")
+                tail_words = [t.replace("_", " ").capitalize() for t in tokens[2:]]
+                tail_str = ", ".join(tail_words)
+                return f"{pair_str}, {tail_str}." if tail_str else f"{pair_str}."
+
+        # 4. Smart multi-word synthesis for arbitrary signed combinations
+        clean_words = []
+        for t in tokens:
+            cleaned = t.replace("_", " ").capitalize()
+            clean_words.append(cleaned)
+
+        if len(clean_words) == 2:
+            w1, w2 = clean_words[0], clean_words[1]
+            if w1.upper() in ["PLEASE", "HELLO"] or w2.upper() in ["PLEASE"]:
+                sentence = f"{w1}, {w2}."
+            else:
+                sentence = f"{w1} and {w2}."
+        else:
+            sentence = " ".join(clean_words)
+            if sentence and sentence[-1] not in [".", "?", "!"]:
+                sentence += "."
+
         return sentence
 
     def backspace(self) -> str:
@@ -127,6 +208,23 @@ class SentenceBuilder:
         """Reset sentence buffer."""
         self.tokens.clear()
         self.spelling_buffer.clear()
+        self.last_activity_time = time.time()
+
+    def get_idle_seconds(self) -> float:
+        """Return elapsed seconds since last token or letter activity."""
+        return max(0.0, time.time() - self.last_activity_time)
+
+    def check_sentence_timeout(self, timeout_sec: float) -> bool:
+        """
+        Check if user has been inactive for longer than timeout_sec while having an active sentence.
+        If timeout is exceeded, clears buffer and returns True.
+        """
+        if (self.tokens or self.spelling_buffer) and timeout_sec > 0:
+            if self.get_idle_seconds() >= timeout_sec:
+                logger.info(f"SentenceBuilder: Auto-cleared sentence buffer after {timeout_sec}s idle timeout.")
+                self.clear()
+                return True
+        return False
 
     def commit_sentence(self) -> str:
         """Return finalized sentence and clear buffer."""

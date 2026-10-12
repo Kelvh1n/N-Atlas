@@ -94,16 +94,17 @@ SUPPORTED_LANGUAGES = {
 }
 
 # Machine Learning Parameters
-CONFIDENCE_THRESHOLD = 0.75       # Min probability required to trigger gesture
-STABILITY_FRAMES = 6              # Consecutive frames required to confirm gesture (~120ms)
-DEBOUNCE_COOLDOWN_SEC = 1.0       # Cooldown before the same sign can trigger again
+CONFIDENCE_THRESHOLD = 0.80       # Min probability required to trigger gesture (strict against noise)
+STABILITY_FRAMES = 8              # Consecutive frames required to confirm gesture (~160ms deliberate hold)
+DEBOUNCE_COOLDOWN_SEC = 0.8       # Cooldown before the same sign can trigger again
 
 # Static Pose Burst & Spatial Invariance Settings
 DEFAULT_STATIC_SNAPSHOTS = 50       # Recommended minimum snapshots for static poses
 DEFAULT_BURST_DURATION_SEC = 2.5    # Capture duration for 50+ snapshot burst
 SPATIAL_AUGMENTATION_DEFAULT = True # Enable synthetic 3D spatial translation invariance
 
-# N-Atlas HuggingFace Model Configuration
-NATLAS_MODEL_NAME = "facebook/nllb-200-distilled-600M" # Compatible Afro-centric multilingual model
+# N-Atlas HuggingFace Model Configuration (NCAIR Nigeria)
+NATLAS_MODEL_NAME = "NCAIR1/N-ATLaS"
+NATLAS_LOCAL_DIR = MODELS_DIR / "natlas"
 USE_NEURAL_TRANSLATION_DEFAULT = False  # Start with ultra-fast offline dictionary, toggle to neural
 

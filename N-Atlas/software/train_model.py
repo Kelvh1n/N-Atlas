@@ -205,14 +205,31 @@ def train_classifier(
             )
         else: # Default: Random Forest
             model = RandomForestClassifier(
-                n_estimators=100,
+                n_estimators=120,
                 max_depth=16,
+                min_samples_split=4,
+                min_samples_leaf=2,
                 n_jobs=-1,
                 random_state=random_state
             )
 
         logger.info(f"Training {model.__class__.__name__} ({resolved_mode.upper()} mode, {len(selected_cols)} features) on {len(X_train)} samples across {len(classes)} classes...")
         model.fit(X_train_scaled, y_train)
+
+        # Compute cluster centroids and statistical radii for Out-of-Distribution (OOD) Gating
+        cluster_stats = {}
+        for cls_idx, cls_name in enumerate(classes):
+            cls_samples = X_train_scaled[y_train == cls_idx]
+            if len(cls_samples) > 0:
+                centroid = np.mean(cls_samples, axis=0)
+                dists = np.linalg.norm(cls_samples - centroid, axis=1)
+                r_95 = float(np.percentile(dists, 95))
+                r_max = float(np.max(dists))
+                cluster_stats[cls_name] = {
+                    "centroid": centroid.tolist(),
+                    "radius_95": r_95,
+                    "max_radius": r_max
+                }
 
         # Evaluate performance
         y_pred = model.predict(X_test_scaled)
@@ -239,6 +256,7 @@ def train_classifier(
             "original_train_samples": orig_train_samples,
             "spatial_augmentation": bool(spatial_augmentation),
             "test_samples": len(X_test),
+            "cluster_stats": cluster_stats,
             "timestamp": time.time()
         }
         with open(config.MODEL_METADATA_PATH, "w") as f:

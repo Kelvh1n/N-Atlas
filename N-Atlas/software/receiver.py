@@ -228,9 +228,12 @@ class DualGloveReceiver:
             f_val = flat[i]
             b_val = bent[i]
             diff = f_val - b_val
-            if abs(diff) < 50:
-                diff = 1000  # Avoid division by zero
-            # In our voltage divider, higher resistance (bent) = lower voltage = lower ADC
+            if abs(diff) < 60:
+                # Finger has negligible calibration range (e.g. disconnected or floating ADC pin).
+                # Default to 0.0 (neutral flat rest) to prevent floating pins from pegging at 100% flexion.
+                norm.append(0.0)
+                continue
+            # In standard voltage divider, higher resistance (bent) = lower voltage = lower ADC
             ratio = (f_val - raw_flex[i]) / float(diff)
             norm.append(float(np.clip(ratio, 0.0, 1.0)))
         return norm
