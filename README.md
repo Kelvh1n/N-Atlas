@@ -116,13 +116,14 @@ See [docs/CIRCUIT_DIAGRAM.md](file:///c:/Users/emmak/Desktop/SERIOUS%20PROJECTS/
 ### 1. Flash the ESP32 Glove Firmware
 
 1. Install [Arduino IDE](https://www.arduino.cc/) or PlatformIO with the **ESP32 Board Package**.
-2. Open `firmware/esp32_glove_left/esp32_glove_left.ino`:
-   - Edit `config.h` to set your local Wi-Fi router or laptop Mobile Hotspot SSID/password.
-   - Set `HOST_PC_IP` to your laptop/PC's local IP address (find using `ipconfig` on Windows).
-   - Connect the **Left Glove ESP32** via USB and click **Upload**.
-3. Open `firmware/esp32_glove_right/esp32_glove_right.ino`:
-   - Verify credentials in `config.h`.
-   - Connect the **Right Glove ESP32** via USB and click **Upload**.
+2. Open `firmware/esp32_glove_right/esp32_glove_right.ino` (or `esp32_glove_left.ino`):
+   - Edit `config.h` to set your local Wi-Fi SSID/password (e.g., `"KINGDOM"`).
+   - **Zero Configuration:** You do NOT need to configure your PC's IP address! The ESP32 waits in Standby.
+   - Connect the ESP32 via USB and click **Upload**.
+   - Open Serial Monitor (115200 baud) — note the IP printed: `GLOVE IP: 192.168.205.82 | STATUS: STANDBY`.
+3. Open the Python GUI (`python app.py`):
+   - Enter the Glove IP into the Right IP (or Left IP) box.
+   - Click **`🔗 Connect`**! Python will establish the link and activate telemetry immediately.
 
 ### 2. Install Python Dependencies
 
