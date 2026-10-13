@@ -16,8 +16,8 @@ This document outlines the complete dataflow and processing pipeline from raw se
          │                                     │
          └─────────────┬───────────────────────┘
                        │
-             UDP Packet Broadcast
-          (Wi-Fi 802.11b/g/n / BLE)
+          Dual Transport Telemetry
+   (Wi-Fi UDP 50Hz / USB Serial 115200)
                        │
                        ▼
          ┌───────────────────────────┐

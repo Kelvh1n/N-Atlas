@@ -20,6 +20,7 @@ WiFiUDP udp;
 IPAddress targetHostIP(0, 0, 0, 0);
 uint16_t targetHostPort = UDP_PORT;
 bool isStreaming = false;
+bool isSerialStreaming = false;
 
 // Sensor variables
 uint16_t flexRaw[5] = {0};
@@ -298,44 +299,84 @@ void checkIncomingUDP() {
 
 void checkSerialInput() {
     if (Serial.available() > 0) {
-        while (Serial.available() > 0) Serial.read(); // flush buffer
-        printNetworkStatusBanner();
+        String cmd = Serial.readStringUntil('\n');
+        cmd.trim();
+        if (cmd.length() == 0) return;
+
+        // 1. Connection Handshake over Serial
+        if (cmd.indexOf("CONNECT") >= 0) {
+            isSerialStreaming = true;
+            flashLED(2, 60);
+            digitalWrite(PIN_STATUS_LED, HIGH);
+            Serial.printf("{\"hand\":\"%s\",\"id\":%d,\"cmd\":\"CONNECTED\",\"connected\":true,\"mode\":\"SERIAL\",\"baud\":115200}\n",
+                HAND_NAME, HAND_ID);
+        }
+        // 2. Disconnect Command over Serial
+        else if (cmd.indexOf("DISCONNECT") >= 0) {
+            isSerialStreaming = false;
+            if (!isStreaming) {
+                digitalWrite(PIN_STATUS_LED, LOW);
+            }
+            Serial.printf("{\"hand\":\"%s\",\"id\":%d,\"cmd\":\"DISCONNECTED\",\"connected\":false,\"mode\":\"SERIAL\"}\n",
+                HAND_NAME, HAND_ID);
+        }
+        // 3. Ping Diagnostic Command over Serial
+        else if (cmd.indexOf("PING") >= 0) {
+            flashLED(1, 50);
+            Serial.printf("{\"hand\":\"%s\",\"id\":%d,\"cmd\":\"PONG\",\"pong\":true,\"mode\":\"SERIAL\",\"connected\":%s}\n",
+                HAND_NAME, HAND_ID, isSerialStreaming ? "true" : "false");
+        }
+        // 4. Physical LED Flash Command over Serial
+        else if (cmd.indexOf("BLINK") >= 0) {
+            flashLED(5, 100);
+            Serial.printf("{\"hand\":\"%s\",\"cmd\":\"BLINK_OK\",\"mode\":\"SERIAL\"}\n", HAND_NAME);
+        }
+        // 5. Help / Status Banner Query
+        else if (cmd.indexOf("STATUS") >= 0 || cmd.indexOf("BANNER") >= 0 || cmd.indexOf("?") >= 0) {
+            printNetworkStatusBanner();
+        }
     }
 }
 
 void loop() {
     unsigned long now = millis();
 
-    // Check for interactive Serial input (hitting Enter reprints IP banner)
+    // Check for interactive Serial commands / input
     checkSerialInput();
 
     // Manage Status LED & UDP Commands
 #if USE_WIFI_UDP
     if (WiFi.status() == WL_CONNECTED) {
         checkIncomingUDP();
-        if (isStreaming) {
-            digitalWrite(PIN_STATUS_LED, HIGH); // Solid ON while streaming
-        } else {
+    }
+#endif
+
+    // Manage Status LED: Solid ON while streaming (either UDP or Serial)
+    if (isStreaming || isSerialStreaming) {
+        digitalWrite(PIN_STATUS_LED, HIGH);
+    } else {
+#if USE_WIFI_UDP
+        if (WiFi.status() == WL_CONNECTED) {
             // Gentle standby blink (500ms cycle) while waiting for GUI
             static unsigned long lastBlink = 0;
             if (now - lastBlink >= 500) {
                 lastBlink = now;
                 digitalWrite(PIN_STATUS_LED, !digitalRead(PIN_STATUS_LED));
             }
+        } else {
+            // Fast blink when disconnected from Wi-Fi
+            static unsigned long lastWifiBlink = 0;
+            if (now - lastWifiBlink >= 150) {
+                lastWifiBlink = now;
+                digitalWrite(PIN_STATUS_LED, !digitalRead(PIN_STATUS_LED));
+            }
         }
-    } else {
-        // Fast blink when disconnected from Wi-Fi
-        static unsigned long lastWifiBlink = 0;
-        if (now - lastWifiBlink >= 150) {
-            lastWifiBlink = now;
-            digitalWrite(PIN_STATUS_LED, !digitalRead(PIN_STATUS_LED));
-        }
-    }
 #endif
+    }
 
-    // Periodic reminder on Serial Monitor every 5 seconds
+    // Periodic reminder on Serial Monitor every 5 seconds (suppressed during active Serial streaming)
     static unsigned long lastIpPrintTime = 0;
-    if (now - lastIpPrintTime >= 5000) {
+    if (!isSerialStreaming && (now - lastIpPrintTime >= 5000)) {
         lastIpPrintTime = now;
         if (WiFi.status() == WL_CONNECTED) {
             if (isStreaming) {
@@ -346,13 +387,13 @@ void loop() {
                     HAND_NAME, WiFi.localIP().toString().c_str(), UDP_PORT);
             }
         } else {
-            Serial.printf("[%s GLOVE] Wi-Fi reconnecting to '%s'...\n", HAND_NAME, WIFI_SSID);
+            Serial.printf("[%s GLOVE] Wi-Fi reconnecting to '%s' (USB Serial Ready)...\n", HAND_NAME, WIFI_SSID);
             WiFi.reconnect();
         }
     }
 
-    // ONLY ACQUIRE AND TRANSMIT TELEMETRY IF isStreaming IS TRUE!
-    if (isStreaming && (now - lastSampleTime >= SAMPLE_INTERVAL_MS)) {
+    // ACQUIRE AND TRANSMIT TELEMETRY IF STREAMING VIA UDP OR SERIAL!
+    if ((isStreaming || isSerialStreaming) && (now - lastSampleTime >= SAMPLE_INTERVAL_MS)) {
         lastSampleTime = now;
 
         // 1. Acquire sensor readings
@@ -374,18 +415,23 @@ void loop() {
             mx, my, mz
         );
 
-        // 3. Transmit packet directly to Python Host
+        // 3. Transmit packet via Wi-Fi UDP
 #if USE_WIFI_UDP
-        if (targetHostIP != IPAddress(0, 0, 0, 0)) {
+        if (isStreaming && targetHostIP != IPAddress(0, 0, 0, 0)) {
             udp.beginPacket(targetHostIP, targetHostPort);
             udp.write((const uint8_t*)buffer, strlen(buffer));
             udp.endPacket();
         }
 #else
-        SerialBT.print(buffer);
+        if (isStreaming) {
+            SerialBT.print(buffer);
+        }
 #endif
 
-        if (packetCount % 50 == 0) {
+        // 4. Transmit packet via USB Serial
+        if (isSerialStreaming) {
+            Serial.print(buffer);
+        } else if (isStreaming && (packetCount % 50 == 0)) {
             Serial.print(buffer);
         }
     }

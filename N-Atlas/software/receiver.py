@@ -13,6 +13,14 @@ from typing import Dict, Any, Optional, Tuple, List
 import numpy as np
 import config
 
+try:
+    import serial
+    import serial.tools.list_ports
+    SERIAL_AVAILABLE = True
+except ImportError:
+    SERIAL_AVAILABLE = False
+    serial = None
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("GloveReceiver")
 
@@ -168,6 +176,14 @@ class DualGloveReceiver:
             "RIGHT": {"success": False, "rtt_ms": 0.0, "last_ping": 0.0, "status": "Idle"}
         }
 
+        # Serial (USB / COM Port) Telemetry Attributes
+        self.serial_connections: Dict[str, Optional[Any]] = {"LEFT": None, "RIGHT": None}
+        self.serial_threads: Dict[str, Optional[threading.Thread]] = {"LEFT": None, "RIGHT": None}
+        self.serial_running: Dict[str, bool] = {"LEFT": False, "RIGHT": False}
+        self.connection_modes: Dict[str, str] = {"LEFT": "WIFI", "RIGHT": "WIFI"}  # "WIFI" or "SERIAL"
+        self.serial_ports: Dict[str, Optional[str]] = {"LEFT": None, "RIGHT": None}
+        self.serial_detected_hands: Dict[str, Optional[str]] = {"LEFT": None, "RIGHT": None}
+
     def _empty_hand_state(self, hand: str) -> Dict[str, Any]:
         return {
             "hand": hand,
@@ -277,8 +293,10 @@ class DualGloveReceiver:
                 self.socket.close()
             except Exception:
                 pass
+        self.disconnect_serial_glove("LEFT")
+        self.disconnect_serial_glove("RIGHT")
         self.stop_simulation()
-        logger.info("UDP Receiver stopped.")
+        logger.info("Dual Glove Receiver stopped.")
 
     def _listen_loop(self):
         while self.running:
@@ -451,9 +469,249 @@ class DualGloveReceiver:
             target_state["connected"] = False
         return False, f"No response from {ip_clean}:{port} (Check ESP32 power & Wi-Fi)"
 
-    def disconnect_glove(self, hand: str) -> None:
-        """Manually mark glove as disconnected and send DISCONNECT command."""
+    # =========================================================================
+    # SERIAL (USB / COM PORT) CONNECTION PROTOCOL
+    # =========================================================================
+    @staticmethod
+    def list_available_serial_ports() -> List[Dict[str, str]]:
+        """Return available system COM / Serial ports with friendly descriptions."""
+        if not SERIAL_AVAILABLE:
+            return []
+        results = []
+        try:
+            ports = serial.tools.list_ports.comports()
+            for p in ports:
+                results.append({
+                    "port": p.device,
+                    "description": p.description or p.device,
+                    "hwid": getattr(p, "hwid", "")
+                })
+        except Exception as e:
+            logger.debug(f"Error enumerating serial ports: {e}")
+        return results
+
+    def connect_serial_glove(
+        self,
+        hand: str,
+        port_name: str,
+        baud: int = config.DEFAULT_SERIAL_BAUD,
+        timeout: float = 6.0
+    ) -> Tuple[bool, str]:
+        """
+        Establish a serial connection with an ESP32 glove over USB/COM port.
+        Sends CONNECT handshake and streams 50 Hz telemetry over serial.
+        """
         hand = hand.upper()
+        if not SERIAL_AVAILABLE:
+            return False, "pyserial is not installed (pip install pyserial)"
+        if not port_name or not port_name.strip():
+            return False, "COM port name is empty"
+
+        port_clean = port_name.strip()
+        self.disconnect_glove(hand)  # Clean up any existing connection on this hand
+
+        try:
+            ser = serial.Serial(
+                port_clean,
+                baud,
+                timeout=0.1,
+                write_timeout=1.0,
+                dsrdtr=False,
+                rtscts=False
+            )
+            # Set DTR and RTS False to avoid holding ESP32 in reset
+            try:
+                ser.dtr = False
+                ser.rts = False
+            except Exception:
+                pass
+        except Exception as se:
+            err_msg = str(se)
+            if "Access is denied" in err_msg or "PermissionError" in err_msg:
+                return False, f"Port {port_clean} is busy (close Arduino Serial Monitor / terminal)"
+            return False, f"Could not open {port_clean}: {err_msg}"
+
+        # Register serial handle and start background reading thread
+        self.serial_running[hand] = True
+        self.serial_connections[hand] = ser
+        self.serial_ports[hand] = port_clean
+        self.connection_modes[hand] = "SERIAL"
+
+        thread = threading.Thread(
+            target=self._serial_listen_loop,
+            args=(hand, ser, port_clean),
+            daemon=True
+        )
+        self.serial_threads[hand] = thread
+        thread.start()
+
+        with self.lock:
+            self.active_connections[hand] = True
+            self.connected_ips[hand] = f"{port_clean} (Serial)"
+            self.ping_results[hand]["status"] = "Connecting (Serial)..."
+            self.ping_results[hand]["success"] = False
+            self.serial_detected_hands[hand] = None
+
+        # Allow UART line to settle and clear boot chatter
+        time.sleep(0.2)
+        try:
+            ser.reset_input_buffer()
+            ser.write(b"CONNECT\n")
+            ser.flush()
+        except Exception as we:
+            self.disconnect_serial_glove(hand)
+            return False, f"Failed to write to {port_clean}: {we}"
+
+        # Wait up to `timeout` for incoming telemetry packets or handshake reply
+        start_time = time.time()
+        last_retry = start_time
+        other_hand = "LEFT" if hand == "RIGHT" else "RIGHT"
+
+        while time.time() - start_time < timeout:
+            with self.lock:
+                target_state = self.left_state if hand == "LEFT" else self.right_state
+                other_state = self.right_state if hand == "LEFT" else self.left_state
+
+                if target_state["connected"] and (time.time() - target_state["last_seen"] < 2.0):
+                    fps = self.left_fps if hand == "LEFT" else self.right_fps
+                    status_str = f"Active ({fps:.0f} Hz, {port_clean})" if fps > 0 else f"Active ({port_clean})"
+                    self.ping_results[hand]["success"] = True
+                    self.ping_results[hand]["status"] = status_str
+                    return True, status_str
+
+                # Fast hand mismatch detection from parsed serial packets
+                detected_hand = self.serial_detected_hands.get(hand)
+                if detected_hand and detected_hand != hand:
+                    self.disconnect_serial_glove(hand)
+                    return False, f"HAND_MISMATCH:{detected_hand}"
+
+                # Check if the board on this COM port is actually transmitting as the other hand!
+                if other_state["connected"] and (time.time() - other_state["last_seen"] < 2.0):
+                    self.disconnect_serial_glove(hand)
+                    return False, f"HAND_MISMATCH:{other_hand}"
+
+                if self.ping_results[hand]["success"]:
+                    status_str = f"Connected ({port_clean})"
+                    return True, status_str
+
+            # Retry sending CONNECT every 0.5s
+            if time.time() - last_retry >= 0.5:
+                try:
+                    ser.write(b"CONNECT\n")
+                    ser.flush()
+                except Exception:
+                    pass
+                last_retry = time.time()
+
+            time.sleep(0.04)
+
+        self.disconnect_serial_glove(hand)
+        return False, f"No response from {port_clean} (Confirm glove firmware & 115200 baud)"
+
+    def _serial_listen_loop(self, hand: str, ser: Any, port_clean: str):
+        """Continuously read lines of telemetry from the open serial port."""
+        logger.info(f"Started Serial listen loop for {hand} glove on {port_clean}.")
+        while self.running and self.serial_running.get(hand, False):
+            try:
+                if not ser.is_open:
+                    break
+                line_bytes = ser.readline()
+                if not line_bytes:
+                    continue
+                line_str = line_bytes.decode("utf-8", errors="ignore").strip()
+                if line_str:
+                    try:
+                        if line_str.startswith("{") and line_str.endswith("}"):
+                            p = json.loads(line_str)
+                            h = p.get("hand", "").upper()
+                            if h in ["LEFT", "RIGHT"]:
+                                self.serial_detected_hands[hand] = h
+                    except Exception:
+                        pass
+                    self._process_raw_packet(line_str, f"{port_clean} (Serial)")
+            except (Exception, OSError) as e:
+                logger.debug(f"Serial port {port_clean} read exception: {e}")
+                break
+
+        with self.lock:
+            if self.connection_modes.get(hand) == "SERIAL":
+                target_state = self.left_state if hand == "LEFT" else self.right_state
+                target_state["connected"] = False
+                self.active_connections[hand] = False
+                self.connected_ips[hand] = None
+        logger.info(f"Serial listen loop ended for {hand} glove on {port_clean}.")
+
+    def disconnect_serial_glove(self, hand: str):
+        """Close open serial connection for a given hand."""
+        hand = hand.upper()
+        self.serial_running[hand] = False
+        ser = self.serial_connections.get(hand)
+        if ser:
+            try:
+                if ser.is_open:
+                    ser.write(b"DISCONNECT\n")
+                    ser.flush()
+                    ser.close()
+            except Exception:
+                pass
+            self.serial_connections[hand] = None
+        self.serial_ports[hand] = None
+        with self.lock:
+            if self.connection_modes.get(hand) == "SERIAL":
+                self.active_connections[hand] = False
+                self.connected_ips[hand] = None
+                target_state = self.left_state if hand == "LEFT" else self.right_state
+                target_state["connected"] = False
+                target_state["last_seen"] = 0.0
+                self.ping_results[hand]["success"] = False
+                self.ping_results[hand]["status"] = "Disconnected"
+        logger.info(f"{hand} serial glove connection closed.")
+
+    def ping_serial_glove(self, hand: str, timeout: float = 1.0) -> Tuple[bool, str]:
+        """Ping a serial-connected glove."""
+        hand = hand.upper()
+        ser = self.serial_connections.get(hand)
+        if not ser or not ser.is_open:
+            return False, "Serial not open"
+        try:
+            start_t = time.time()
+            ser.write(b"PING\n")
+            ser.flush()
+            # Wait for PONG
+            t_end = time.time() + timeout
+            while time.time() < t_end:
+                with self.lock:
+                    target_state = self.left_state if hand == "LEFT" else self.right_state
+                    if target_state["connected"] and (time.time() - target_state["last_seen"] < 1.0):
+                        rtt = max(1.0, (time.time() - start_t) * 1000.0)
+                        return True, f"Online ({rtt:.1f}ms, Serial)"
+                time.sleep(0.02)
+            return True, "Online (Serial)"
+        except Exception as e:
+            return False, f"Serial ping error: {e}"
+
+    def blink_serial_glove_led(self, hand: str):
+        """Send BLINK command over serial."""
+        hand = hand.upper()
+        ser = self.serial_connections.get(hand)
+        if ser and ser.is_open:
+            try:
+                ser.write(b"BLINK\n")
+                ser.flush()
+                logger.info(f"Sent BLINK command via Serial to {hand} glove.")
+            except Exception as e:
+                logger.warning(f"Failed to send BLINK over serial: {e}")
+
+    # =========================================================================
+    # UNIFIED CONNECTION MANAGEMENT (SERIAL & WI-FI UDP)
+    # =========================================================================
+    def disconnect_glove(self, hand: str) -> None:
+        """Manually mark glove as disconnected and send DISCONNECT command via active protocol."""
+        hand = hand.upper()
+        if self.connection_modes.get(hand) == "SERIAL":
+            self.disconnect_serial_glove(hand)
+            return
+
         ip = self.connected_ips.get(hand)
         if ip:
             self.send_udp_cmd(ip, config.DEFAULT_UDP_PORT, {"cmd": "DISCONNECT", "hand": hand})
@@ -466,7 +724,6 @@ class DualGloveReceiver:
             self.ping_results[hand]["success"] = False
             self.ping_results[hand]["status"] = "Disconnected"
         logger.info(f"{hand} glove disconnected.")
-
 
     def tare_orientation_vertical(self, hand: str = "RIGHT") -> None:
         """Tare orientation tracker for a glove to vertical reference pose (fingertips UP at 90°, palm facing PC)."""
@@ -482,8 +739,11 @@ class DualGloveReceiver:
         logger.info(f"{hand} glove orientation tared to Vertical reference (Pitch: +90°, Roll: 0°).")
 
     def ping_glove(self, hand: str, ip: str, port: int = config.DEFAULT_UDP_PORT, timeout: float = 1.0) -> Tuple[bool, str]:
-        """Send a Ping command to the glove and check network reachability."""
+        """Send a Ping command to the glove and check network/serial reachability."""
         hand = hand.upper()
+        if self.connection_modes.get(hand) == "SERIAL":
+            return self.ping_serial_glove(hand, timeout)
+
         if not ip or not ip.strip():
             return False, "IP address is empty"
 
@@ -522,7 +782,12 @@ class DualGloveReceiver:
         return False, "No Response"
 
     def blink_glove_led(self, hand: str, ip: str, port: int = config.DEFAULT_UDP_PORT):
-        """Send a BLINK command to trigger physical ESP32 onboard LED flashing."""
+        """Send a BLINK command to trigger physical ESP32 onboard LED flashing (Serial or Wi-Fi)."""
+        hand = hand.upper()
+        if self.connection_modes.get(hand) == "SERIAL":
+            self.blink_serial_glove_led(hand)
+            return
+
         if not ip or not ip.strip():
             return
         payload = {"cmd": "BLINK", "hand": hand.upper()}

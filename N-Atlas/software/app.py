@@ -60,6 +60,12 @@ class ASLTranslatorApp(tk.Tk):
         self.auto_clear_delay_var = tk.StringVar(value="6s")
         self.last_sentence_activity_time = time.time()
 
+        # Connection Mode Variables (WIFI vs SERIAL)
+        self.left_conn_mode_var = tk.StringVar(value="WIFI")
+        self.right_conn_mode_var = tk.StringVar(value="WIFI")
+        self.left_serial_port_var = tk.StringVar(value="")
+        self.right_serial_port_var = tk.StringVar(value="")
+
         # Build UI Layout
         self._build_header()
         self._build_connection_bar()
@@ -199,12 +205,12 @@ class ASLTranslatorApp(tk.Tk):
         self.lbl_model_indicator.pack(side=tk.LEFT, padx=6)
 
     def _build_connection_bar(self):
-        conn_frame = tk.Frame(self, bg="#161f2e", padx=16, pady=8, bd=1, relief="ridge")
+        conn_frame = tk.Frame(self, bg="#161f2e", padx=14, pady=8, bd=1, relief="ridge")
         conn_frame.pack(fill=tk.X, padx=15, pady=(8, 0))
 
         # Title & Info Button
         title_box = tk.Frame(conn_frame, bg="#161f2e")
-        title_box.pack(side=tk.LEFT, padx=(0, 10))
+        title_box.pack(side=tk.LEFT, padx=(0, 8))
         tk.Label(
             title_box,
             text="HARDWARE LINK:",
@@ -214,37 +220,78 @@ class ASLTranslatorApp(tk.Tk):
         ).pack(side=tk.LEFT)
         tk.Button(
             title_box,
-            text="ℹ️ How It Works",
+            text="ℹ️ Protocol Guide",
             font=("Segoe UI", 8),
             bg="#334155",
             fg="#38bdf8",
             padx=4,
             pady=0,
-            command=self._show_connection_help
-        ).pack(side=tk.LEFT, padx=5)
+            command=self._show_connection_help,
+            cursor="hand2"
+        ).pack(side=tk.LEFT, padx=4)
 
         # --- LEFT GLOVE SECTION ---
         l_box = tk.Frame(conn_frame, bg="#161f2e")
-        l_box.pack(side=tk.LEFT, padx=8)
+        l_box.pack(side=tk.LEFT, padx=6)
 
         # Inbuilt LED for Left Glove
         self.led_left = tk.Label(
             l_box,
-            text="● INBUILT LED: OFF",
+            text="● LED: OFF",
             font=("Segoe UI", 8, "bold"),
             fg="#64748b",
             bg="#0f172a",
-            padx=7,
+            padx=6,
             pady=3,
             relief="groove"
         )
-        self.led_left.pack(side=tk.LEFT, padx=4)
+        self.led_left.pack(side=tk.LEFT, padx=3)
 
-        tk.Label(l_box, text="Left IP:", font=("Segoe UI", 9, "bold"), fg="#38bdf8", bg="#161f2e").pack(side=tk.LEFT, padx=(4, 2))
-        self.entry_left_ip = tk.Entry(l_box, width=13, font=("Segoe UI", 9), bg="#0f172a", fg="#f8fafc", insertbackground="white")
+        # Mode Toggle Button (Wi-Fi vs USB Serial)
+        self.btn_left_mode = tk.Button(
+            l_box,
+            text="📶 Wi-Fi",
+            font=("Segoe UI", 8, "bold"),
+            bg="#1e293b",
+            fg="#38bdf8",
+            padx=6,
+            pady=1,
+            command=self._toggle_left_conn_mode,
+            cursor="hand2"
+        )
+        self.btn_left_mode.pack(side=tk.LEFT, padx=2)
+
+        # Wi-Fi input container for Left
+        self.frame_left_wifi = tk.Frame(l_box, bg="#161f2e")
+        tk.Label(self.frame_left_wifi, text="IP:", font=("Segoe UI", 9, "bold"), fg="#38bdf8", bg="#161f2e").pack(side=tk.LEFT, padx=(2, 2))
+        self.entry_left_ip = tk.Entry(self.frame_left_wifi, width=13, font=("Segoe UI", 9), bg="#0f172a", fg="#f8fafc", insertbackground="white")
         self.entry_left_ip.insert(0, "192.168.205.81")
         self.entry_left_ip.pack(side=tk.LEFT, padx=2)
         self.entry_left_ip.bind("<Return>", lambda e: self._connect_left_glove())
+        self.frame_left_wifi.pack(side=tk.LEFT, padx=2)
+
+        # Serial input container for Left (hidden by default)
+        self.frame_left_serial = tk.Frame(l_box, bg="#161f2e")
+        tk.Label(self.frame_left_serial, text="Port:", font=("Segoe UI", 9, "bold"), fg="#38bdf8", bg="#161f2e").pack(side=tk.LEFT, padx=(2, 2))
+        self.combo_left_serial = ttk.Combobox(
+            self.frame_left_serial,
+            textvariable=self.left_serial_port_var,
+            width=14,
+            state="readonly",
+            font=("Segoe UI", 8)
+        )
+        self.combo_left_serial.pack(side=tk.LEFT, padx=2)
+        tk.Button(
+            self.frame_left_serial,
+            text="🔄",
+            font=("Segoe UI", 8),
+            bg="#1e293b",
+            fg="#38bdf8",
+            padx=3,
+            pady=0,
+            command=self._refresh_serial_ports,
+            cursor="hand2"
+        ).pack(side=tk.LEFT, padx=1)
 
         self.btn_left_connect = tk.Button(
             l_box,
@@ -267,7 +314,7 @@ class ASLTranslatorApp(tk.Tk):
             padx=6,
             pady=1,
             command=self._ping_left_glove
-        ).pack(side=tk.LEFT, padx=3)
+        ).pack(side=tk.LEFT, padx=2)
 
         tk.Button(
             l_box,
@@ -282,38 +329,78 @@ class ASLTranslatorApp(tk.Tk):
 
         self.lbl_left_conn_status = tk.Label(
             l_box,
-            text="Standby (Click Connect)",
+            text="Standby",
             font=("Segoe UI", 8),
             fg="#94a3b8",
             bg="#161f2e"
         )
-        self.lbl_left_conn_status.pack(side=tk.LEFT, padx=6)
+        self.lbl_left_conn_status.pack(side=tk.LEFT, padx=4)
 
         # Separator
-        tk.Label(conn_frame, text="|", font=("Segoe UI", 12), fg="#334155", bg="#161f2e").pack(side=tk.LEFT, padx=8)
+        tk.Label(conn_frame, text="|", font=("Segoe UI", 12), fg="#334155", bg="#161f2e").pack(side=tk.LEFT, padx=6)
 
         # --- RIGHT GLOVE SECTION ---
         r_box = tk.Frame(conn_frame, bg="#161f2e")
-        r_box.pack(side=tk.LEFT, padx=8)
+        r_box.pack(side=tk.LEFT, padx=6)
 
         # Inbuilt LED for Right Glove
         self.led_right = tk.Label(
             r_box,
-            text="● INBUILT LED: OFF",
+            text="● LED: OFF",
             font=("Segoe UI", 8, "bold"),
             fg="#64748b",
             bg="#0f172a",
-            padx=7,
+            padx=6,
             pady=3,
             relief="groove"
         )
-        self.led_right.pack(side=tk.LEFT, padx=4)
+        self.led_right.pack(side=tk.LEFT, padx=3)
 
-        tk.Label(r_box, text="Right IP:", font=("Segoe UI", 9, "bold"), fg="#10b981", bg="#161f2e").pack(side=tk.LEFT, padx=(4, 2))
-        self.entry_right_ip = tk.Entry(r_box, width=13, font=("Segoe UI", 9), bg="#0f172a", fg="#f8fafc", insertbackground="white")
+        # Mode Toggle Button (Wi-Fi vs USB Serial)
+        self.btn_right_mode = tk.Button(
+            r_box,
+            text="📶 Wi-Fi",
+            font=("Segoe UI", 8, "bold"),
+            bg="#1e293b",
+            fg="#10b981",
+            padx=6,
+            pady=1,
+            command=self._toggle_right_conn_mode,
+            cursor="hand2"
+        )
+        self.btn_right_mode.pack(side=tk.LEFT, padx=2)
+
+        # Wi-Fi input container for Right
+        self.frame_right_wifi = tk.Frame(r_box, bg="#161f2e")
+        tk.Label(self.frame_right_wifi, text="IP:", font=("Segoe UI", 9, "bold"), fg="#10b981", bg="#161f2e").pack(side=tk.LEFT, padx=(2, 2))
+        self.entry_right_ip = tk.Entry(self.frame_right_wifi, width=13, font=("Segoe UI", 9), bg="#0f172a", fg="#f8fafc", insertbackground="white")
         self.entry_right_ip.insert(0, "192.168.205.82")
         self.entry_right_ip.pack(side=tk.LEFT, padx=2)
         self.entry_right_ip.bind("<Return>", lambda e: self._connect_right_glove())
+        self.frame_right_wifi.pack(side=tk.LEFT, padx=2)
+
+        # Serial input container for Right (hidden by default)
+        self.frame_right_serial = tk.Frame(r_box, bg="#161f2e")
+        tk.Label(self.frame_right_serial, text="Port:", font=("Segoe UI", 9, "bold"), fg="#10b981", bg="#161f2e").pack(side=tk.LEFT, padx=(2, 2))
+        self.combo_right_serial = ttk.Combobox(
+            self.frame_right_serial,
+            textvariable=self.right_serial_port_var,
+            width=14,
+            state="readonly",
+            font=("Segoe UI", 8)
+        )
+        self.combo_right_serial.pack(side=tk.LEFT, padx=2)
+        tk.Button(
+            self.frame_right_serial,
+            text="🔄",
+            font=("Segoe UI", 8),
+            bg="#1e293b",
+            fg="#10b981",
+            padx=3,
+            pady=0,
+            command=self._refresh_serial_ports,
+            cursor="hand2"
+        ).pack(side=tk.LEFT, padx=1)
 
         self.btn_right_connect = tk.Button(
             r_box,
@@ -336,7 +423,7 @@ class ASLTranslatorApp(tk.Tk):
             padx=6,
             pady=1,
             command=self._ping_right_glove
-        ).pack(side=tk.LEFT, padx=3)
+        ).pack(side=tk.LEFT, padx=2)
 
         tk.Button(
             r_box,
@@ -351,36 +438,96 @@ class ASLTranslatorApp(tk.Tk):
 
         self.lbl_right_conn_status = tk.Label(
             r_box,
-            text="Standby (Click Connect)",
+            text="Standby",
             font=("Segoe UI", 8),
             fg="#94a3b8",
             bg="#161f2e"
         )
-        self.lbl_right_conn_status.pack(side=tk.LEFT, padx=6)
+        self.lbl_right_conn_status.pack(side=tk.LEFT, padx=4)
+
+        # Initial serial ports discovery
+        self._refresh_serial_ports()
 
         # Connection Guidance Sub-Banner
         hint_frame = tk.Frame(self, bg="#0f172a", padx=16, pady=5, bd=1, relief="flat")
         hint_frame.pack(fill=tk.X, padx=15, pady=(2, 0))
-        tk.Label(
+        self.lbl_conn_hint = tk.Label(
             hint_frame,
-            text="💡 Step 1: Turn on ESP32  ➔  Step 2: Note IP in Arduino Serial Monitor (e.g. 192.168.205.82)  ➔  Step 3: Enter IP above & Click '🔗 Connect'",
+            text="💡 Dual Link: Choose [📶 Wi-Fi] (enter ESP32 IP) or [🔌 USB Serial] (select COM port), then click '🔗 Connect'. Zero host PC IP setup needed!",
             font=("Segoe UI", 9, "bold"),
             fg="#38bdf8",
             bg="#0f172a"
-        ).pack(side=tk.LEFT)
-        tk.Label(
-            hint_frame,
-            text="   (ESP32 does NOT need Host PC IP! It waits quietly in Standby until you click Connect)",
-            font=("Segoe UI", 8, "italic"),
-            fg="#94a3b8",
-            bg="#0f172a"
-        ).pack(side=tk.LEFT)
+        )
+        self.lbl_conn_hint.pack(side=tk.LEFT)
+
+    def _refresh_serial_ports(self):
+        """Scans system for available COM / Serial ports and populates dropdowns."""
+        ports = self.receiver.list_available_serial_ports()
+        port_items = []
+        for p in ports:
+            desc = p.get("description", "")
+            port_name = p.get("port", "")
+            if desc and desc != port_name:
+                port_items.append(f"{port_name} ({desc[:24]})")
+            else:
+                port_items.append(port_name)
+
+        if not port_items:
+            port_items = ["(No COM Ports)"]
+
+        if hasattr(self, "combo_left_serial"):
+            self.combo_left_serial["values"] = port_items
+            if not self.left_serial_port_var.get() or self.left_serial_port_var.get() not in port_items:
+                self.left_serial_port_var.set(port_items[0])
+
+        if hasattr(self, "combo_right_serial"):
+            self.combo_right_serial["values"] = port_items
+            if not self.right_serial_port_var.get() or self.right_serial_port_var.get() not in port_items:
+                self.right_serial_port_var.set(port_items[0])
+
+    def _toggle_left_conn_mode(self):
+        """Switch between Wi-Fi and USB Serial connection mode for Left Glove."""
+        if self.receiver.left_state["connected"]:
+            messagebox.showinfo("Disconnect First", "Please disconnect Left Glove before switching connection mode.")
+            return
+
+        cur = self.left_conn_mode_var.get()
+        if cur == "WIFI":
+            self.left_conn_mode_var.set("SERIAL")
+            self.btn_left_mode.config(text="🔌 USB Serial", fg="#fbbf24")
+            self.frame_left_wifi.pack_forget()
+            self.frame_left_serial.pack(side=tk.LEFT, padx=2, before=self.btn_left_connect)
+            self._refresh_serial_ports()
+        else:
+            self.left_conn_mode_var.set("WIFI")
+            self.btn_left_mode.config(text="📶 Wi-Fi", fg="#38bdf8")
+            self.frame_left_serial.pack_forget()
+            self.frame_left_wifi.pack(side=tk.LEFT, padx=2, before=self.btn_left_connect)
+
+    def _toggle_right_conn_mode(self):
+        """Switch between Wi-Fi and USB Serial connection mode for Right Glove."""
+        if self.receiver.right_state["connected"]:
+            messagebox.showinfo("Disconnect First", "Please disconnect Right Glove before switching connection mode.")
+            return
+
+        cur = self.right_conn_mode_var.get()
+        if cur == "WIFI":
+            self.right_conn_mode_var.set("SERIAL")
+            self.btn_right_mode.config(text="🔌 USB Serial", fg="#fbbf24")
+            self.frame_right_wifi.pack_forget()
+            self.frame_right_serial.pack(side=tk.LEFT, padx=2, before=self.btn_right_connect)
+            self._refresh_serial_ports()
+        else:
+            self.right_conn_mode_var.set("WIFI")
+            self.btn_right_mode.config(text="📶 Wi-Fi", fg="#10b981")
+            self.frame_right_serial.pack_forget()
+            self.frame_right_wifi.pack(side=tk.LEFT, padx=2, before=self.btn_right_connect)
 
     def _show_connection_help(self):
-        """Displays explanation modal about zero-config ESP32 connection architecture."""
+        """Displays explanation modal about zero-config ESP32 dual connection architecture."""
         help_win = tk.Toplevel(self)
-        help_win.title("How ESP32 Glove Connection Works")
-        help_win.geometry("560x420")
+        help_win.title("How ESP32 Glove Connection Works (Dual Transport Link)")
+        help_win.geometry("620x530")
         help_win.configure(bg="#0f172a")
         help_win.resizable(False, False)
         help_win.transient(self)
@@ -391,28 +538,27 @@ class ASLTranslatorApp(tk.Tk):
 
         tk.Label(
             card,
-            text="📡 ZERO-CONFIG ESP32 WIRELESS LINK",
-            font=("Segoe UI", 12, "bold"),
+            text="📡 DUAL TRANSPORT LINK PROTOCOL (WI-FI & USB SERIAL)",
+            font=("Segoe UI", 11, "bold"),
             fg="#fbbf24",
             bg="#1a2332"
         ).pack(pady=(0, 8))
 
         info_text = (
-            "1. NO HOST PC IP CONFIGURATION NEEDED:\n"
-            "   Your ESP32 glove does NOT need to know your laptop's IP address.\n"
-            "   You never have to run 'ipconfig' or hardcode IPs in Arduino!\n\n"
-            "2. HOW THE ESP32 BOOTS UP:\n"
-            "   • Powers on and connects to Wi-Fi ('KINGDOM').\n"
-            "   • Receives its own IP from the router (e.g. 192.168.205.82).\n"
-            "   • Prints: 'GLOVE IP: 192.168.205.82 | STATUS: STANDBY' in Serial Monitor.\n"
-            "   • Sits silently in STANDBY with a gentle blue LED blink.\n\n"
-            "3. HOW THE PYTHON GUI CONNECTS:\n"
-            "   • The Python app waits until YOU enter the ESP32 IP and click '🔗 Connect'.\n"
-            "   • Python sends a handshake message directly to the glove's IP.\n"
-            "   • The ESP32 receives it, turns its LED solid ON, and starts streaming at 50 Hz.\n\n"
-            "4. ZERO INTERFERENCE:\n"
-            "   • The Python app will never auto-connect on startup.\n"
-            "   • You have full manual control over when gloves connect or disconnect."
+            "OPTION 1: WIRELESS WI-FI UDP (Primary)\n"
+            "   • No Host PC IP setup needed! Gloves wait silently in STANDBY on boot.\n"
+            "   • Check glove IP on boot (e.g. 192.168.205.81 or 192.168.205.82).\n"
+            "   • Ensure glove mode is set to '📶 Wi-Fi', enter IP, and click '🔗 Connect'.\n"
+            "   • ESP32 acknowledges handshake, turns LED solid ON, and streams 50 Hz JSON.\n\n"
+            "OPTION 2: WIRED USB SERIAL / COM PORT (Secondary / Fallback)\n"
+            "   • Plug ESP32 glove into laptop via micro-USB / Type-C data cable.\n"
+            "   • Click the mode button to toggle to '🔌 USB Serial'.\n"
+            "   • Select the COM port from dropdown (e.g. COM10 - CP210x USB Bridge).\n"
+            "   • Click '🔗 Connect' — Python handshakes at 115200 baud and streams 50 Hz JSON.\n"
+            "   • Completely immune to Wi-Fi drops, router client isolation, or hotspot issues.\n\n"
+            "⚠️ IMPORTANT SERIAL MONITOR NOTE:\n"
+            "   • On Windows, a COM port can only be opened by ONE application at a time.\n"
+            "   • Always close the Arduino IDE Serial Monitor before connecting in this GUI!"
         )
 
         msg_box = tk.Label(
@@ -422,7 +568,7 @@ class ASLTranslatorApp(tk.Tk):
             fg="#f8fafc",
             bg="#1a2332",
             justify=tk.LEFT,
-            wraplength=510
+            wraplength=570
         )
         msg_box.pack(fill=tk.BOTH, expand=True, pady=4)
 
@@ -437,7 +583,7 @@ class ASLTranslatorApp(tk.Tk):
             command=help_win.destroy
         ).pack(pady=(8, 0))
 
-    def _show_connect_orientation_prompt(self, hand: str, ip: str, on_proceed):
+    def _show_connect_orientation_prompt(self, hand: str, target_desc: str, on_proceed):
         """
         Display instructional modal prompting user to hold hand vertically:
         - Fingertips pointing straight upward at 90°
@@ -475,7 +621,7 @@ class ASLTranslatorApp(tk.Tk):
 
         tk.Label(
             card,
-            text=f"Position your hand before connecting to {ip}:",
+            text=f"Position your hand before connecting to {target_desc}:",
             font=("Segoe UI", 9),
             fg="#94a3b8",
             bg="#1a2332"
@@ -558,127 +704,277 @@ class ASLTranslatorApp(tk.Tk):
         if self.receiver.left_state["connected"]:
             self.receiver.disconnect_glove("LEFT")
             self.btn_left_connect.config(text="🔗 Connect", bg="#0284c7")
-            self.lbl_left_conn_status.config(text="Standby (Click Connect)", fg="#94a3b8")
+            self.lbl_left_conn_status.config(text="Standby", fg="#94a3b8")
             return
 
-        ip = self.entry_left_ip.get().strip()
-        if not ip:
-            messagebox.showwarning(
-                "Missing IP",
-                "Please enter the Left Glove ESP32 IP address.\n\n"
-                "Look at the Arduino Serial Monitor when the ESP32 boots up to find its IP (e.g. 192.168.205.81).\n"
-                "Note: Your ESP32 does NOT need your PC IP — entering the glove IP here links them automatically."
-            )
-            return
+        mode = self.left_conn_mode_var.get()
+        if mode == "SERIAL":
+            raw_port = self.left_serial_port_var.get().strip()
+            if not raw_port or "(No COM" in raw_port:
+                messagebox.showwarning(
+                    "No Port Selected",
+                    "Please select an available USB Serial / COM port for the Left Glove.\n\n"
+                    "If your ESP32 is plugged in, click the 🔄 refresh button."
+                )
+                return
+            port = raw_port.split(" ")[0].strip() if " " in raw_port else raw_port
 
-        def _do_connect():
-            self.btn_left_connect.config(text="Connecting...", bg="#d97706", state=tk.DISABLED)
-            self.lbl_left_conn_status.config(text=f"Connecting to {ip}...", fg="#f59e0b")
+            def _do_serial_connect():
+                self.btn_left_connect.config(text="Connecting...", bg="#d97706", state=tk.DISABLED)
+                self.lbl_left_conn_status.config(text=f"Connecting to {port}...", fg="#f59e0b")
 
-            def _worker():
-                success, msg = self.receiver.connect_glove("LEFT", ip)
-                def _update():
-                    self.btn_left_connect.config(state=tk.NORMAL)
-                    if success:
-                        self.btn_left_connect.config(text="✕ Disconnect", bg="#b91c1c")
-                        self.lbl_left_conn_status.config(text=f"{msg} (90° Tared)", fg="#10b981")
-                        self.receiver.tare_orientation_vertical("LEFT")
-                        if hasattr(self, "hand_visualizer"):
-                            self.hand_visualizer.canvas.orientation_calc.zero_to_vertical()
-                    else:
-                        self.btn_left_connect.config(text="🔗 Connect", bg="#0284c7")
-                        self.lbl_left_conn_status.config(text=f"Failed: {msg}", fg="#ef4444")
-                        messagebox.showerror(
-                            "Connection Failed",
-                            f"Could not connect to Left Glove at {ip}:5005.\n\n"
-                            "Troubleshooting Checklist:\n"
-                            "1. Confirm you uploaded the updated sketch (esp32_glove_left.ino) to the ESP32.\n"
-                            "2. Check Arduino Serial Monitor — it should show:\n"
-                            f"   'GLOVE IP: {ip} | STATUS: STANDBY'.\n"
-                            "3. Confirm your PC and ESP32 are both connected to Wi-Fi 'KINGDOM'.\n"
-                            "4. The ESP32 does NOT look for your PC IP — clicking Connect sends the link from your PC directly to the glove."
-                        )
-                self.after(0, _update)
+                def _worker():
+                    success, msg = self.receiver.connect_serial_glove("LEFT", port)
+                    def _update():
+                        self.btn_left_connect.config(state=tk.NORMAL)
+                        if success:
+                            self.btn_left_connect.config(text="✕ Disconnect", bg="#b91c1c")
+                            self.lbl_left_conn_status.config(text=f"{msg} (90° Tared)", fg="#10b981")
+                            self.receiver.tare_orientation_vertical("LEFT")
+                            if hasattr(self, "hand_visualizer"):
+                                self.hand_visualizer.canvas.orientation_calc.zero_to_vertical()
+                        elif msg.startswith("HAND_MISMATCH:"):
+                            detected_hand = msg.split(":")[1].strip()
+                            self.btn_left_connect.config(text="🔗 Connect", bg="#0284c7")
+                            self.lbl_left_conn_status.config(text=f"Detected: {detected_hand}", fg="#f59e0b")
+                            do_switch = messagebox.askyesno(
+                                "Hand Mismatch Detected",
+                                f"Port {port} responded, but it is transmitting as the {detected_hand} GLOVE!\n\n"
+                                f"You clicked Connect under 'Left Glove'.\n\n"
+                                f"Would you like to connect {port} as your {detected_hand} Glove now?"
+                            )
+                            if do_switch and detected_hand == "RIGHT":
+                                if self.right_conn_mode_var.get() != "SERIAL":
+                                    self._toggle_right_conn_mode()
+                                self.right_serial_port_var.set(raw_port)
+                                self._connect_right_glove()
+                        else:
+                            self.btn_left_connect.config(text="🔗 Connect", bg="#0284c7")
+                            self.lbl_left_conn_status.config(text=f"Failed: {msg}", fg="#ef4444")
+                            messagebox.showerror(
+                                "Serial Connection Failed",
+                                f"Could not connect to Left Glove on {port}.\n\n"
+                                f"Details: {msg}\n\n"
+                                "Troubleshooting Checklist:\n"
+                                "1. Close Arduino Serial Monitor (Windows locks COM ports to one app).\n"
+                                "2. Ensure the USB cable supports data and is firmly plugged in.\n"
+                                "3. If this board is your Right Glove, connect it under the 'Right Glove' panel."
+                            )
+                    self.after(0, _update)
 
-            threading.Thread(target=_worker, daemon=True).start()
+                threading.Thread(target=_worker, daemon=True).start()
 
-        self._show_connect_orientation_prompt("LEFT", ip, _do_connect)
+            self._show_connect_orientation_prompt("LEFT", f"USB Serial ({port})", _do_serial_connect)
+
+        else: # Wi-Fi Mode
+            ip = self.entry_left_ip.get().strip()
+            if not ip:
+                messagebox.showwarning(
+                    "Missing IP",
+                    "Please enter the Left Glove ESP32 IP address.\n\n"
+                    "Look at the Arduino Serial Monitor when the ESP32 boots up to find its IP (e.g. 192.168.205.81).\n"
+                    "Note: Your ESP32 does NOT need your PC IP — entering the glove IP here links them automatically."
+                )
+                return
+
+            def _do_wifi_connect():
+                self.btn_left_connect.config(text="Connecting...", bg="#d97706", state=tk.DISABLED)
+                self.lbl_left_conn_status.config(text=f"Connecting to {ip}...", fg="#f59e0b")
+
+                def _worker():
+                    success, msg = self.receiver.connect_glove("LEFT", ip)
+                    def _update():
+                        self.btn_left_connect.config(state=tk.NORMAL)
+                        if success:
+                            self.btn_left_connect.config(text="✕ Disconnect", bg="#b91c1c")
+                            self.lbl_left_conn_status.config(text=f"{msg} (90° Tared)", fg="#10b981")
+                            self.receiver.tare_orientation_vertical("LEFT")
+                            if hasattr(self, "hand_visualizer"):
+                                self.hand_visualizer.canvas.orientation_calc.zero_to_vertical()
+                        else:
+                            self.btn_left_connect.config(text="🔗 Connect", bg="#0284c7")
+                            self.lbl_left_conn_status.config(text=f"Failed: {msg}", fg="#ef4444")
+                            messagebox.showerror(
+                                "Connection Failed",
+                                f"Could not connect to Left Glove at {ip}:5005.\n\n"
+                                "Troubleshooting Checklist:\n"
+                                "1. Confirm you uploaded the updated sketch (esp32_glove_left.ino) to the ESP32.\n"
+                                "2. Check Arduino Serial Monitor — it should show:\n"
+                                f"   'GLOVE IP: {ip} | STATUS: STANDBY'.\n"
+                                "3. Confirm your PC and ESP32 are both connected to Wi-Fi 'KINGDOM'.\n"
+                                "4. The ESP32 does NOT look for your PC IP — clicking Connect sends the link from your PC directly to the glove."
+                            )
+                    self.after(0, _update)
+
+                threading.Thread(target=_worker, daemon=True).start()
+
+            self._show_connect_orientation_prompt("LEFT", f"Wi-Fi ({ip})", _do_wifi_connect)
 
     def _connect_right_glove(self):
         if self.receiver.right_state["connected"]:
             self.receiver.disconnect_glove("RIGHT")
             self.btn_right_connect.config(text="🔗 Connect", bg="#059669")
-            self.lbl_right_conn_status.config(text="Standby (Click Connect)", fg="#94a3b8")
+            self.lbl_right_conn_status.config(text="Standby", fg="#94a3b8")
             return
 
-        ip = self.entry_right_ip.get().strip()
-        if not ip:
-            messagebox.showwarning(
-                "Missing IP",
-                "Please enter the Right Glove ESP32 IP address.\n\n"
-                "Look at the Arduino Serial Monitor when the ESP32 boots up to find its IP (e.g. 192.168.205.82).\n"
-                "Note: Your ESP32 does NOT need your PC IP — entering the glove IP here links them automatically."
-            )
-            return
+        mode = self.right_conn_mode_var.get()
+        if mode == "SERIAL":
+            raw_port = self.right_serial_port_var.get().strip()
+            if not raw_port or "(No COM" in raw_port:
+                messagebox.showwarning(
+                    "No Port Selected",
+                    "Please select an available USB Serial / COM port for the Right Glove.\n\n"
+                    "If your ESP32 is plugged in, click the 🔄 refresh button."
+                )
+                return
+            port = raw_port.split(" ")[0].strip() if " " in raw_port else raw_port
 
-        def _do_connect():
-            self.btn_right_connect.config(text="Connecting...", bg="#d97706", state=tk.DISABLED)
-            self.lbl_right_conn_status.config(text=f"Connecting to {ip}...", fg="#f59e0b")
+            def _do_serial_connect():
+                self.btn_right_connect.config(text="Connecting...", bg="#d97706", state=tk.DISABLED)
+                self.lbl_right_conn_status.config(text=f"Connecting to {port}...", fg="#f59e0b")
 
-            def _worker():
-                success, msg = self.receiver.connect_glove("RIGHT", ip)
-                def _update():
-                    self.btn_right_connect.config(state=tk.NORMAL)
-                    if success:
-                        self.btn_right_connect.config(text="✕ Disconnect", bg="#b91c1c")
-                        self.lbl_right_conn_status.config(text=f"{msg} (90° Tared)", fg="#10b981")
-                        self.receiver.tare_orientation_vertical("RIGHT")
-                        if hasattr(self, "hand_visualizer"):
-                            self.hand_visualizer.canvas.orientation_calc.zero_to_vertical()
-                    else:
-                        self.btn_right_connect.config(text="🔗 Connect", bg="#059669")
-                        self.lbl_right_conn_status.config(text=f"Failed: {msg}", fg="#ef4444")
-                        messagebox.showerror(
-                            "Connection Failed",
-                            f"Could not connect to Right Glove at {ip}:5005.\n\n"
-                            "Troubleshooting Checklist:\n"
-                            "1. Confirm you uploaded the updated sketch (esp32_glove_right.ino) to the ESP32.\n"
-                            "2. Check Arduino Serial Monitor — it should show:\n"
-                            f"   'GLOVE IP: {ip} | STATUS: STANDBY'.\n"
-                            "3. Confirm your PC and ESP32 are both connected to Wi-Fi 'KINGDOM'.\n"
-                            "4. The ESP32 does NOT look for your PC IP — clicking Connect sends the link from your PC directly to the glove."
-                        )
-                self.after(0, _update)
+                def _worker():
+                    success, msg = self.receiver.connect_serial_glove("RIGHT", port)
+                    def _update():
+                        self.btn_right_connect.config(state=tk.NORMAL)
+                        if success:
+                            self.btn_right_connect.config(text="✕ Disconnect", bg="#b91c1c")
+                            self.lbl_right_conn_status.config(text=f"{msg} (90° Tared)", fg="#10b981")
+                            self.receiver.tare_orientation_vertical("RIGHT")
+                            if hasattr(self, "hand_visualizer"):
+                                self.hand_visualizer.canvas.orientation_calc.zero_to_vertical()
+                        elif msg.startswith("HAND_MISMATCH:"):
+                            detected_hand = msg.split(":")[1].strip()
+                            self.btn_right_connect.config(text="🔗 Connect", bg="#059669")
+                            self.lbl_right_conn_status.config(text=f"Detected: {detected_hand}", fg="#f59e0b")
+                            do_switch = messagebox.askyesno(
+                                "Hand Mismatch Detected",
+                                f"Port {port} responded, but it is transmitting as the {detected_hand} GLOVE!\n\n"
+                                f"You clicked Connect under 'Right Glove'.\n\n"
+                                f"Would you like to connect {port} as your {detected_hand} Glove now?"
+                            )
+                            if do_switch and detected_hand == "LEFT":
+                                if self.left_conn_mode_var.get() != "SERIAL":
+                                    self._toggle_left_conn_mode()
+                                self.left_serial_port_var.set(raw_port)
+                                self._connect_left_glove()
+                        else:
+                            self.btn_right_connect.config(text="🔗 Connect", bg="#059669")
+                            self.lbl_right_conn_status.config(text=f"Failed: {msg}", fg="#ef4444")
+                            messagebox.showerror(
+                                "Serial Connection Failed",
+                                f"Could not connect to Right Glove on {port}.\n\n"
+                                f"Details: {msg}\n\n"
+                                "Troubleshooting Checklist:\n"
+                                "1. Close Arduino Serial Monitor (Windows locks COM ports to one app).\n"
+                                "2. Ensure the USB cable supports data and is firmly plugged in.\n"
+                                "3. If this board is your Left Glove, connect it under the 'Left Glove' panel."
+                            )
+                    self.after(0, _update)
 
-            threading.Thread(target=_worker, daemon=True).start()
+                threading.Thread(target=_worker, daemon=True).start()
 
-        self._show_connect_orientation_prompt("RIGHT", ip, _do_connect)
+            self._show_connect_orientation_prompt("RIGHT", f"USB Serial ({port})", _do_serial_connect)
+
+        else: # Wi-Fi Mode
+            ip = self.entry_right_ip.get().strip()
+            if not ip:
+                messagebox.showwarning(
+                    "Missing IP",
+                    "Please enter the Right Glove ESP32 IP address.\n\n"
+                    "Look at the Arduino Serial Monitor when the ESP32 boots up to find its IP (e.g. 192.168.205.82).\n"
+                    "Note: Your ESP32 does NOT need your PC IP — entering the glove IP here links them automatically."
+                )
+                return
+
+            def _do_wifi_connect():
+                self.btn_right_connect.config(text="Connecting...", bg="#d97706", state=tk.DISABLED)
+                self.lbl_right_conn_status.config(text=f"Connecting to {ip}...", fg="#f59e0b")
+
+                def _worker():
+                    success, msg = self.receiver.connect_glove("RIGHT", ip)
+                    def _update():
+                        self.btn_right_connect.config(state=tk.NORMAL)
+                        if success:
+                            self.btn_right_connect.config(text="✕ Disconnect", bg="#b91c1c")
+                            self.lbl_right_conn_status.config(text=f"{msg} (90° Tared)", fg="#10b981")
+                            self.receiver.tare_orientation_vertical("RIGHT")
+                            if hasattr(self, "hand_visualizer"):
+                                self.hand_visualizer.canvas.orientation_calc.zero_to_vertical()
+                        else:
+                            self.btn_right_connect.config(text="🔗 Connect", bg="#059669")
+                            self.lbl_right_conn_status.config(text=f"Failed: {msg}", fg="#ef4444")
+                            messagebox.showerror(
+                                "Connection Failed",
+                                f"Could not connect to Right Glove at {ip}:5005.\n\n"
+                                "Troubleshooting Checklist:\n"
+                                "1. Confirm you uploaded the updated sketch (esp32_glove_right.ino) to the ESP32.\n"
+                                "2. Check Arduino Serial Monitor — it should show:\n"
+                                f"   'GLOVE IP: {ip} | STATUS: STANDBY'.\n"
+                                "3. Confirm your PC and ESP32 are both connected to Wi-Fi 'KINGDOM'.\n"
+                                "4. The ESP32 does NOT look for your PC IP — clicking Connect sends the link from your PC directly to the glove."
+                            )
+                    self.after(0, _update)
+
+                threading.Thread(target=_worker, daemon=True).start()
+
+            self._show_connect_orientation_prompt("RIGHT", f"Wi-Fi ({ip})", _do_wifi_connect)
 
     def _ping_left_glove(self):
-        ip = self.entry_left_ip.get().strip()
+        mode = self.left_conn_mode_var.get()
+        if mode == "SERIAL":
+            raw_port = self.left_serial_port_var.get().strip()
+            target = raw_port.split(" ")[0].strip() if " " in raw_port else raw_port
+        else:
+            target = self.entry_left_ip.get().strip()
+
+        if not target or "(No COM" in target:
+            self.lbl_left_conn_status.config(text="No target configured", fg="#ef4444")
+            return
+
         self.lbl_left_conn_status.config(text="Pinging...", fg="#f59e0b")
         def _worker():
-            success, msg = self.receiver.ping_glove("LEFT", ip)
+            success, msg = self.receiver.ping_glove("LEFT", target)
             color = "#10b981" if success else "#ef4444"
             self.after(0, lambda: self.lbl_left_conn_status.config(text=msg, fg=color))
         threading.Thread(target=_worker, daemon=True).start()
 
     def _blink_left_glove(self):
-        ip = self.entry_left_ip.get().strip()
-        self.receiver.blink_glove_led("LEFT", ip)
+        mode = self.left_conn_mode_var.get()
+        if mode == "SERIAL":
+            raw_port = self.left_serial_port_var.get().strip()
+            target = raw_port.split(" ")[0].strip() if " " in raw_port else raw_port
+        else:
+            target = self.entry_left_ip.get().strip()
+        self.receiver.blink_glove_led("LEFT", target)
 
     def _ping_right_glove(self):
-        ip = self.entry_right_ip.get().strip()
+        mode = self.right_conn_mode_var.get()
+        if mode == "SERIAL":
+            raw_port = self.right_serial_port_var.get().strip()
+            target = raw_port.split(" ")[0].strip() if " " in raw_port else raw_port
+        else:
+            target = self.entry_right_ip.get().strip()
+
+        if not target or "(No COM" in target:
+            self.lbl_right_conn_status.config(text="No target configured", fg="#ef4444")
+            return
+
         self.lbl_right_conn_status.config(text="Pinging...", fg="#f59e0b")
         def _worker():
-            success, msg = self.receiver.ping_glove("RIGHT", ip)
+            success, msg = self.receiver.ping_glove("RIGHT", target)
             color = "#10b981" if success else "#ef4444"
             self.after(0, lambda: self.lbl_right_conn_status.config(text=msg, fg=color))
         threading.Thread(target=_worker, daemon=True).start()
 
     def _blink_right_glove(self):
-        ip = self.entry_right_ip.get().strip()
-        self.receiver.blink_glove_led("RIGHT", ip)
+        mode = self.right_conn_mode_var.get()
+        if mode == "SERIAL":
+            raw_port = self.right_serial_port_var.get().strip()
+            target = raw_port.split(" ")[0].strip() if " " in raw_port else raw_port
+        else:
+            target = self.entry_right_ip.get().strip()
+        self.receiver.blink_glove_led("RIGHT", target)
 
     def _build_tabs(self):
 
@@ -1324,34 +1620,38 @@ class ASLTranslatorApp(tk.Tk):
 
             # Update Header Badges & Connection Bar Inbuilt LEDs
             if l_state["connected"]:
-                self.left_indicator.config(text=f"● LEFT GLOVE: {self.receiver.left_fps:.0f} Hz", fg="#10b981")
-                self.led_left.config(text="● INBUILT LED: ON", fg="#38bdf8", bg="#032b43")
-                self.lbl_left_conn_status.config(text=f"Active ({self.receiver.left_fps:.0f} Hz)", fg="#10b981")
+                l_mode = self.receiver.connection_modes.get("LEFT", "WIFI")
+                l_tag = "USB" if l_mode == "SERIAL" else "Wi-Fi"
+                self.left_indicator.config(text=f"● LEFT GLOVE [{l_tag}]: {self.receiver.left_fps:.0f} Hz", fg="#10b981")
+                self.led_left.config(text="● LED: ON", fg="#38bdf8", bg="#032b43")
+                self.lbl_left_conn_status.config(text=f"Active [{l_tag}] ({self.receiver.left_fps:.0f} Hz)", fg="#10b981")
                 if hasattr(self, "btn_left_connect"):
                     self.btn_left_connect.config(text="✕ Disconnect", bg="#b91c1c")
             else:
                 self.left_indicator.config(text="● LEFT GLOVE: OFF", fg="#ef4444")
-                self.led_left.config(text="● INBUILT LED: OFF", fg="#64748b", bg="#0f172a")
+                self.led_left.config(text="● LED: OFF", fg="#64748b", bg="#0f172a")
                 if hasattr(self, "btn_left_connect") and str(self.btn_left_connect["state"]) != "disabled":
                     self.btn_left_connect.config(text="🔗 Connect", bg="#0284c7")
                 curr_l = self.lbl_left_conn_status.cget("text")
                 if not any(k in curr_l for k in ["Pinging", "Connecting", "Failed", "Standby"]):
-                    self.lbl_left_conn_status.config(text="Standby (Click Connect)", fg="#94a3b8")
+                    self.lbl_left_conn_status.config(text="Standby", fg="#94a3b8")
 
             if r_state["connected"]:
-                self.right_indicator.config(text=f"● RIGHT GLOVE: {self.receiver.right_fps:.0f} Hz", fg="#10b981")
-                self.led_right.config(text="● INBUILT LED: ON", fg="#10b981", bg="#064e3b")
-                self.lbl_right_conn_status.config(text=f"Active ({self.receiver.right_fps:.0f} Hz)", fg="#10b981")
+                r_mode = self.receiver.connection_modes.get("RIGHT", "WIFI")
+                r_tag = "USB" if r_mode == "SERIAL" else "Wi-Fi"
+                self.right_indicator.config(text=f"● RIGHT GLOVE [{r_tag}]: {self.receiver.right_fps:.0f} Hz", fg="#10b981")
+                self.led_right.config(text="● LED: ON", fg="#10b981", bg="#064e3b")
+                self.lbl_right_conn_status.config(text=f"Active [{r_tag}] ({self.receiver.right_fps:.0f} Hz)", fg="#10b981")
                 if hasattr(self, "btn_right_connect"):
                     self.btn_right_connect.config(text="✕ Disconnect", bg="#b91c1c")
             else:
                 self.right_indicator.config(text="● RIGHT GLOVE: OFF", fg="#ef4444")
-                self.led_right.config(text="● INBUILT LED: OFF", fg="#64748b", bg="#0f172a")
+                self.led_right.config(text="● LED: OFF", fg="#64748b", bg="#0f172a")
                 if hasattr(self, "btn_right_connect") and str(self.btn_right_connect["state"]) != "disabled":
                     self.btn_right_connect.config(text="🔗 Connect", bg="#059669")
                 curr_r = self.lbl_right_conn_status.cget("text")
                 if not any(k in curr_r for k in ["Pinging", "Connecting", "Failed", "Standby"]):
-                    self.lbl_right_conn_status.config(text="Standby (Click Connect)", fg="#94a3b8")
+                    self.lbl_right_conn_status.config(text="Standby", fg="#94a3b8")
 
             # Update Telemetry Bars
             finger_abbr = ["Thumb", "Index", "Middle", "Ring", "Pinky"]

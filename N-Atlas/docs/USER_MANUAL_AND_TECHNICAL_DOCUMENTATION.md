@@ -198,12 +198,14 @@ From the authoritative file [`data/calibration/glove_calibration.json`](file:///
 
 ### 3.9 Implemented and Tested Data Links
 **Answer:**  
-- **Wi-Fi UDP:** **Implemented, tested, and active default.** Provides 50 Hz packet streaming with round-trip latency < 5 ms.
-- **Bluetooth Serial (SPP):** **Implemented in firmware** (`#if !USE_WIFI_UDP` via `BluetoothSerial.h`, broadcasting as `ASL_Glove_RIGHT`), but Wi-Fi UDP is the primary tested production link.
-- **USB Serial:** Active at 115200 baud for boot diagnostics, IP reporting, and calibration verification.
+- **Wi-Fi UDP:** **Implemented, tested, and active primary default.** Provides 50 Hz wireless packet streaming with round-trip latency < 5 ms.
+- **USB Serial (UART):** **Implemented, tested, and active secondary option.** Direct wired connection over micro-USB / Type-C cable at 115,200 baud. Streams identical 50 Hz JSON telemetry packets directly to PC GUI via COM port; completely immune to Wi-Fi congestion, router isolation, or network drops.
+- **Bluetooth Serial (SPP):** **Implemented in firmware** (`#if !USE_WIFI_UDP` via `BluetoothSerial.h`, broadcasting as `ASL_Glove_RIGHT`), but Wi-Fi UDP and USB Serial are the production links.
 
-### 3.10 UDP Network Setup, Default IPs, Port, and Connection Procedure
+### 3.10 Transport Protocols: Wi-Fi UDP and USB Serial Procedures
 **Answer:**  
+
+#### Protocol A: Wireless Wi-Fi UDP (Primary)
 - **Network Setup:** Both the ESP32 and host PC connect to a 2.4 GHz local Wi-Fi router or laptop Mobile Hotspot (configured in `config.h` as SSID `"KINGDOM"`, password `"Kingdom2026"`).
 - **Default IP & Port:** ESP32 obtains its IP via DHCP (e.g. `192.168.205.82`). UDP port is **`5005`**.
 - **Connection Handshake:**
@@ -212,7 +214,23 @@ From the authoritative file [`data/calibration/glove_calibration.json`](file:///
   3. The GUI prompts the user with an instructional hand orientation modal (hold fingertips vertical at 90°, palm facing PC monitor).
   4. The GUI sends a UDP `CONNECT` packet to the glove IP.
   5. The ESP32 receives the packet, latches the host PC's IP and port, switches its onboard LED to solid ON, and begins streaming telemetry packets at 50 Hz.
-- **Packet Format (JSON):**
+
+#### Protocol B: Wired USB Serial / COM Port (Secondary / Fallback)
+- **Physical Link:** ESP32 is plugged directly into the host PC via micro-USB or USB Type-C data cable.
+- **Port Detection & Baud:** Serial port is auto-discovered via `pyserial` (e.g. `COM10 - Silicon Labs CP210x USB to UART Bridge`). Communication runs at **115,200 baud**, 8 data bits, no parity, 1 stop bit (`115200 8N1`).
+- **Connection Handshake:**
+  1. User toggles the connection mode button from `[ 📶 Wi-Fi ]` to `[ 🔌 USB Serial ]`.
+  2. The GUI populates available COM ports with a `[🔄]` scan button.
+  3. Clicking `🔗 Connect` opens the serial port with `dtr=False, rts=False` (preventing unwanted ESP32 resets) and transmits a clean ASCII command: `CONNECT\n`.
+  4. ESP32 firmware parses the command in `checkSerialInput()`, sets `isSerialStreaming = true`, turns the status LED solid ON, and begins 50 Hz streaming over UART.
+  5. Bidirectional serial commands supported:
+     - `CONNECT` — Begins 50 Hz JSON packet stream.
+     - `DISCONNECT` — Halts streaming and returns ESP32 to standby.
+     - `PING` — Responds immediately with `PONG:OK`.
+     - `BLINK` — Flashes onboard LED 3 times for visual hardware identification.
+     - `STATUS` — Reports streaming status and sensor health.
+
+- **Unified Packet Format (JSON across both Wi-Fi UDP & USB Serial):**
   ```json
   {"hand":"RIGHT","id":1,"ip":"192.168.205.82","ts":124500,"seq":152,"flex":[801,519,780,679,471],"accel":[-246,-894,460],"gyro":[-23,32,-7],"mag":[-131,-5,-141]}
   ```
@@ -531,7 +549,7 @@ python software/app.py
 
 ### 6.6 Main GUI Panels & Indicators
 **Answer:**  
-- **Hardware Link Bar:** Displays Left/Right connection state, IP inputs, and ping diagnostics.
+- **Hardware Link Bar:** Displays Left/Right connection state, transport mode switch (`[ 📶 Wi-Fi ]` / `[ 🔌 USB Serial ]`), IP / COM port inputs with `[🔄]` port refresh, Ping test, and Flash LED hardware identification.
 - **Inbuilt LED Status:** Mirrors glove ESP32 onboard blue LED (OFF = Disconnected, Blinking = Standby, Solid = Streaming).
 - **Live Sign Detector:** Shows active sign prediction with confidence bar.
 - **Kinematics State:** Displays hand motion status (`STEADY` vs `IN MOTION`) and sign type (`STATIC POSE` vs `DYNAMIC GESTURE`).
@@ -547,7 +565,7 @@ python software/app.py
 **Answer:**  
 | Subsystem | Mode | Internet Required? |
 | :--- | :--- | :--- |
-| **ESP32 Sensor Telemetry** | Local Wi-Fi UDP | **No** (Local router/hotspot) |
+| **ESP32 Sensor Telemetry** | Local Wi-Fi UDP or Wired USB Serial | **No** (Local router/hotspot or USB cable) |
 | **Gesture Classifier Inference** | Local Scikit-Learn Model | **No** (100% Offline) |
 | **Sentence Construction** | Local Grammar Engine | **No** (100% Offline) |
 | **Lexical Translation Engine** | Local Tonal Dictionary | **No** (100% Offline) |

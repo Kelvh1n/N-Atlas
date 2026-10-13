@@ -12,8 +12,8 @@
 // Network Configuration (Wi-Fi & UDP)
 // ==========================================
 // Replace with your local Wi-Fi router or laptop Mobile Hotspot credentials
-#define WIFI_SSID       "KINGDOM"
-#define WIFI_PASS       "Kingdom2026"
+#define WIFI_SSID       "D-Kingz"
+#define WIFI_PASS       "KELV inakA@0210."
 
 // NOTE: ESP32 does NOT need Host PC IP!
 // It connects to Wi-Fi, prints its IP on Serial Monitor, and waits in Standby.

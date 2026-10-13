@@ -27,6 +27,11 @@ DEFAULT_UDP_PORT = 5005
 UDP_BUFFER_SIZE = 2048
 TELEMETRY_TIMEOUT_SEC = 2.0       # Mark glove as disconnected if no packet received
 
+# Serial (USB / COM Port) Communication Settings
+DEFAULT_SERIAL_BAUD = 115200      # Standard ESP32 USB-UART baud rate
+DEFAULT_SERIAL_TIMEOUT = 0.15     # Non-blocking read timeout (seconds)
+SUPPORTED_BAUD_RATES = [9600, 57600, 115200, 230400, 460800, 921600]
+
 # Sensor Feature Column Names (1-Hand and 2-Hands modes)
 LEFT_FEATURE_COLUMNS = [
     "L_Flex_Thumb", "L_Flex_Index", "L_Flex_Middle", "L_Flex_Ring", "L_Flex_Pinky",
